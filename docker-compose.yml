@@ -1,0 +1,19 @@
+services:
+  cerro:
+    build: .
+    container_name: cerro-control
+    ports:
+      - "9985:9985"
+      - "9986:9986"
+    environment:
+      CERRO_DIR: /app/datos
+      CERRO_TCP_PORT: "9985"
+      CERRO_API_PORT: "9986"
+      CERRO_API_URL: http://161.132.53.51:9050/TermoKing/
+      CERRO_API_URL2: http://161.132.206.104:9050/Datos/
+    volumes:
+      - cerro_datos:/app/datos
+    restart: unless-stopped
+
+volumes:
+  cerro_datos:

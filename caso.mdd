@@ -1,0 +1,8 @@
+[18:05:28] INYECTOR:&O0  // letro 0 zona 1 ventilador zona 1
+[18:05:28] INYECTOR:&O0
+
+
+0000111101100000,1
+
+
+INYECTOR:&RELE3OFF  //apagado de zona 2

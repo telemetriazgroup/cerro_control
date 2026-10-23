@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serial cerro</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --fondo: #12160f;
+    --panel: #1c2418;
+    --linea: #2c3824;
+    --texto: #e7efd8;
+    --suave: #9aab86;
+    --ambar: #e6c15a;
+    --verde: #9dce6a;
+    --salida: #7ec8c3;
+    --alerta: #e07a5f;
+    --on: #d6f58a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--fondo);
+    color: var(--texto);
+    font: 15px/1.45 "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--linea);
+  }
+  h1 { margin: 0; font-size: 1.25rem; font-weight: 650; }
+  header p { margin: 4px 0 0; color: var(--suave); font-size: 0.92rem; }
+  .pill {
+    border: 1px solid var(--linea);
+    background: var(--panel);
+    border-radius: 999px;
+    padding: 8px 14px;
+    color: var(--ambar);
+    white-space: nowrap;
+  }
+  .pill.ok { color: var(--verde); }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.8fr);
+    gap: 16px;
+    padding: 16px;
+  }
+  .terminal, aside section, .aviso {
+    background: var(--panel);
+    border: 1px solid var(--linea);
+    border-radius: 12px;
+  }
+  .terminal { display: flex; flex-direction: column; min-height: 70vh; }
+  #log {
+    flex: 1;
+    margin: 0;
+    padding: 12px 14px;
+    overflow: auto;
+    max-height: 68vh;
+    font: 13px/1.55 ui-monospace, "Cascadia Mono", monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .in { color: var(--verde); }
+  .out { color: var(--salida); }
+  .meta { color: var(--suave); }
+  form {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--linea);
+  }
+  input, select, button {
+    font: inherit;
+    color: var(--texto);
+    background: #10150e;
+    border: 1px solid var(--linea);
+    border-radius: 8px;
+  }
+  input, select { padding: 10px 12px; }
+  #trama { flex: 1; }
+  button {
+    padding: 10px 14px;
+    background: #24301c;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--ambar); }
+  aside { display: flex; flex-direction: column; gap: 12px; }
+  aside section { padding: 14px; }
+  h2 { margin: 0 0 10px; font-size: 0.95rem; letter-spacing: 0.02em; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .dato { background: #10150e; border-radius: 8px; padding: 8px; }
+  .dato span { display: block; color: var(--suave); font-size: 0.75rem; }
+  .dato strong { font-variant-numeric: tabular-nums; }
+  .bits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .bits i {
+    width: 22px; height: 28px;
+    display: grid; place-items: center;
+    border-radius: 4px;
+    background: #10150e;
+    color: var(--suave);
+    font-style: normal;
+    font: 12px ui-monospace, monospace;
+  }
+  .bits i.on { background: #31451c; color: var(--on); }
+  .crudo { margin: 8px 0 0; color: var(--suave); font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
+  .grupos { display: flex; flex-direction: column; gap: 10px; }
+  .grupo p { margin: 0 0 6px; color: var(--ambar); font-size: 0.8rem; }
+  .grupo div { display: flex; flex-wrap: wrap; gap: 6px; }
+  .grupo button { font-size: 0.85rem; }
+  .enlace { color: var(--salida); word-break: break-all; font-size: 0.82rem; }
+  .equipo { padding: 8px 0; border-top: 1px solid var(--linea); }
+  .aviso {
+    display: none;
+    margin: 0 16px 16px;
+    padding: 10px 14px;
+    color: var(--ambar);
+  }
+  .aviso.malo { color: var(--alerta); }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    header { align-items: flex-start; flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Serial del controlador</h1>
+    <p id="subtitulo">Puerto TCP 9985</p>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <select id="ip" hidden></select>
+    <div class="pill" id="conexion">Esperando equipo</div>
+  </div>
+</header>
+<div class="layout">
+  <section class="terminal">
+    <pre id="log"></pre>
+    <form id="envio">
+      <input id="trama" autocomplete="off" placeholder="Trama libre, por ejemplo INYECTOR:&O0" spellcheck="false">
+      <button type="submit">Enviar</button>
+    </form>
+  </section>
+  <aside>
+    <section>
+      <h2>Última lectura</h2>
+      <div class="grid" id="consignas"></div>
+      <p class="crudo" id="etileno"></p>
+      <div class="bits" id="bits"></div>
+      <p class="crudo" id="inyector"></p>
+      <p class="crudo" id="starcool"></p>
+      <p class="crudo" id="bloques"></p>
+      <p class="crudo" id="ack"></p>
+    </section>
+    <section>
+      <h2>Comandos</h2>
+      <div class="grupos" id="comandos"></div>
+    </section>
+    <section>
+      <h2>JSON hacia sus enlaces</h2>
+      <p class="enlace" id="enlaces"></p>
+      <div id="jsons"></div>
+    </section>
+  </aside>
+</div>
+<div class="aviso" id="aviso"></div>
+<script>
+const log = document.getElementById("log");
+const aviso = document.getElementById("aviso");
+let desde = 0;
+let ipActiva = "";
+let pegado = true;
+
+log.addEventListener("scroll", () => {
+  pegado = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+});
+
+function mostrarAviso(texto, malo) {
+  aviso.style.display = "block";
+  aviso.textContent = texto;
+  aviso.className = malo ? "aviso malo" : "aviso";
+}
+
+function ipSeleccionada() {
+  return document.getElementById("ip").value || ipActiva || "";
+}
+
+async function enviar(trama) {
+  const cuerpo = { trama };
+  const ip = ipSeleccionada();
+  if (ip) cuerpo.ip = ip;
+  const respuesta = await fetch("/comando", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cuerpo),
+  });
+  const data = await respuesta.json();
+  if (!respuesta.ok) {
+    mostrarAviso(data.detalle || "No se pudo enviar", true);
+    return;
+  }
+  mostrarAviso("Enviado a " + data.ip + " por el TCP " + data.puerto, false);
+  await tick();
+}
+
+document.getElementById("envio").addEventListener("submit", (evento) => {
+  evento.preventDefault();
+  const campo = document.getElementById("trama");
+  const trama = campo.value.trim();
+  if (!trama) return;
+  campo.value = "";
+  enviar(trama);
+});
+
+function pintarConsignas(consignas) {
+  const orden = ["CO2_1","CO2_2","CO2_3","O2_1","O2_2","O2_3","H_1","H_2","H_3"];
+  const caja = document.getElementById("consignas");
+  caja.replaceChildren();
+  orden.forEach((clave) => {
+    if (!consignas || consignas[clave] == null) return;
+    const celda = document.createElement("div");
+    celda.className = "dato";
+    celda.innerHTML = "<span></span><strong></strong>";
+    celda.querySelector("span").textContent = clave;
+    celda.querySelector("strong").textContent = consignas[clave];
+    caja.appendChild(celda);
+  });
+}
+
+function pintarBits(palabra, flag) {
+  const caja = document.getElementById("bits");
+  caja.replaceChildren();
+  document.getElementById("inyector").textContent = palabra
+    ? "INYECTOR:" + palabra + "," + (flag || "")
+    : "";
+  if (!palabra) return;
+  [...palabra].forEach((bit) => {
+    const celda = document.createElement("i");
+    celda.className = bit === "1" ? "on" : "";
+    celda.textContent = bit;
+    caja.appendChild(celda);
+  });
+}
+
+function pintarEstado(estado, ip) {
+  const est = (estado && ip && estado[ip]) || {};
+  pintarConsignas(est.consignas || {});
+  document.getElementById("etileno").textContent = est.etileno
+    ? "Etileno " + est.etileno
+    : "";
+  pintarBits(est.inyector_bits, est.inyector_flag);
+  const star = [];
+  if (est.starcool_consulta) star.push("Consulta " + est.starcool_consulta);
+  if (est.starcool_salidas) star.push("Salidas " + est.starcool_salidas);
+  document.getElementById("starcool").textContent = star.join("\n");
+  const bloques = [];
+  if (est.ripener && est.ripener.length) bloques.push("RIPENER\n" + est.ripener.join("\n"));
+  if (est.reefer && est.reefer.length) bloques.push("REEFER\n" + est.reefer.join("\n"));
+  document.getElementById("bloques").textContent = bloques.join("\n");
+  const extras = [];
+  if (est.ultimo_ack) extras.push("Respuesta " + est.ultimo_ack);
+  if (est.ultimo_comando) extras.push("Último comando " + est.ultimo_comando);
+  document.getElementById("ack").textContent = extras.join(" · ");
+}
+
+function pintarLineas(lineas) {
+  const frag = document.createDocumentFragment();
+  lineas.forEach((linea) => {
+    const fila = document.createElement("div");
+    fila.className = linea.flujo === "out" ? "out" : "in";
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = linea.hora + "  " + linea.ip + (linea.flujo === "out" ? "  >> " : "  ");
+    fila.appendChild(meta);
+    fila.appendChild(document.createTextNode(linea.texto));
+    frag.appendChild(fila);
+  });
+  log.appendChild(frag);
+  if (pegado) log.scrollTop = log.scrollHeight;
+}
+
+function pintarJson(data) {
+  const enlaces = data.enlaces || {};
+  document.getElementById("enlaces").textContent =
+    (enlaces.termoking || "") + "\n" + (enlaces.datos || "");
+  const caja = document.getElementById("jsons");
+  caja.replaceChildren();
+  data.dispositivos.filter((d) => d.tipo === "json").forEach((d) => {
+    const fila = document.createElement("div");
+    fila.className = "equipo";
+    const envio = d.ultimo_envio;
+    const detalle = envio
+      ? "TermoKing " + (envio.termoking ? "ok" : "fallo") + " · Datos " + (envio.datos ? "ok" : "fallo")
+      : "conectado, aún sin JSON nuevo";
+    fila.textContent = (d.equipo || "JSON") + " · " + d.ip + " · " + detalle;
+    caja.appendChild(fila);
+  });
+}
+
+function pintarConexion(data) {
+  const cerros = data.dispositivos.filter((d) => d.tipo === "cerro" && d.comando_activo);
+  const select = document.getElementById("ip");
+  const previa = select.value;
+  select.replaceChildren();
+  cerros.forEach((d) => {
+    const op = document.createElement("option");
+    op.value = d.ip;
+    op.textContent = d.ip;
+    select.appendChild(op);
+  });
+  select.hidden = cerros.length < 2;
+  if (previa && [...select.options].some((op) => op.value === previa)) select.value = previa;
+  ipActiva = select.value || (cerros[0] && cerros[0].ip) || "";
+  const pill = document.getElementById("conexion");
+  if (ipActiva) {
+    pill.textContent = "Conectado " + ipActiva;
+    pill.className = "pill ok";
+  } else {
+    pill.textContent = "Esperando equipo en " + (data.tcp || 9985);
+    pill.className = "pill";
+  }
+  document.getElementById("subtitulo").textContent = "Los equipos entran por TCP " + (data.tcp || 9985);
+  const claves = Object.keys(data.estado || {});
+  const ipLectura = (ipActiva && data.estado && data.estado[ipActiva])
+    ? ipActiva
+    : (claves[claves.length - 1] || "");
+  pintarEstado(data.estado, ipLectura);
+  pintarJson(data);
+}
+
+async function tick() {
+  const respuesta = await fetch("/serial?desde=" + desde);
+  const data = await respuesta.json();
+  if (data.lineas && data.lineas.length) pintarLineas(data.lineas);
+  if (typeof data.siguiente === "number") desde = data.siguiente;
+  pintarConexion(data);
+}
+
+async function cargarComandos() {
+  const respuesta = await fetch("/comandos");
+  const data = await respuesta.json();
+  const caja = document.getElementById("comandos");
+  const grupos = new Map();
+  (data.comandos || []).forEach((item) => {
+    if (!grupos.has(item.grupo)) grupos.set(item.grupo, []);
+    grupos.get(item.grupo).push(item);
+  });
+  grupos.forEach((items, nombre) => {
+    const bloque = document.createElement("div");
+    bloque.className = "grupo";
+    const titulo = document.createElement("p");
+    titulo.textContent = nombre;
+    const botones = document.createElement("div");
+    items.forEach((item) => {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.textContent = item.etiqueta;
+      boton.title = item.trama;
+      boton.addEventListener("click", () => enviar(item.trama));
+      botones.appendChild(boton);
+    });
+    bloque.appendChild(titulo);
+    bloque.appendChild(botones);
+    caja.appendChild(bloque);
+  });
+}
+
+cargarComandos().then(tick);
+setInterval(() => { tick().catch(() => {}); }, 1000);
+</script>
+</body>
+</html>
