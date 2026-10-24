@@ -76,6 +76,56 @@ SEMILLA = [
 ]
 
 
+def _familia_comando(texto):
+    if texto.startswith("INYECTOR:VALCO") or texto.startswith("INYECTOR:VALNITRO"):
+        return "valvulas"
+    if texto.startswith("INYECTOR:"):
+        if BITMAP.match(texto):
+            return None
+        return "inyector"
+    if texto.startswith("STARCOOL:"):
+        return "starcool"
+    return None
+
+
+def _es_respuesta_cmd(cmd, texto):
+    trama = cmd.get("trama") or ""
+    familia = cmd.get("familia")
+    if texto == "STARCOOL_OK":
+        return familia == "starcool" and trama not in ("STARCOOL:QUEST", "STARCOOL:SALIDAS", "STARCOOL:PLATAFORMA")
+    if texto == "INYECTOR_OK":
+        return familia in ("inyector", "valvulas") and not trama.startswith("INYECTOR:ESTADO")
+    if texto.startswith("STARCOOL_CONSULTA:") and trama == "STARCOOL:QUEST":
+        return True
+    if texto.startswith("STARCOOL_SALIDAS:") and trama == "STARCOOL:SALIDAS":
+        return True
+    if BITMAP.match(texto) and trama.startswith("INYECTOR:ESTADO"):
+        return True
+    return False
+
+
+def _cmd_pub(item):
+    enviado = _parse_iso(item.get("t"))
+    respondido = _parse_iso(item.get("respuesta_en"))
+    espera = None
+    if enviado and respondido:
+        espera = round((respondido - enviado).total_seconds(), 3)
+    return {
+        "id": item.get("id"),
+        "t": item.get("t"),
+        "fecha": fmt_fecha(enviado),
+        "ip": item.get("ip"),
+        "origen": item.get("origen"),
+        "familia": item.get("familia"),
+        "trama": item.get("trama") or "",
+        "delta_anterior_s": item.get("delta_anterior_s"),
+        "respuesta": item.get("respuesta"),
+        "respuesta_en": item.get("respuesta_en"),
+        "respuesta_fecha": fmt_fecha(respondido),
+        "espera_s": espera,
+    }
+
+
 class PanelError(Exception):
     def __init__(self, status, detalle):
         super().__init__(detalle)
@@ -285,14 +335,23 @@ class Panel:
         self.ruta_config = os.path.join(base_dir, "panel_config.json")
         self.ruta_cola = os.path.join(base_dir, "cola_comandos.json")
         self.ruta_vivo = os.path.join(base_dir, "estado_vivo.json")
+        self.dir_cmd = os.path.join(base_dir, "historial_cmd")
         os.makedirs(self.dir_lecturas, exist_ok=True)
+        os.makedirs(self.dir_cmd, exist_ok=True)
         self._lock = threading.Lock()
         self._ips = {}
         self._cola = []
         self._seq = 0
+        self._cmd_seq = 0
+        self._cmd_espera = {}
+        self._cmd_ultimo = {}
+        self._cmd_eco = {}
+        self._cmd_cache = None
+        self._cmd_cache_firma = None
         self.config = self._cargar_config()
         self._cargar_cola()
         self._cargar_vivo()
+        self._restaurar_comandos()
 
     def linea(self, ip, texto, cuando=None):
         """Incorpora una trama entrante. Si es la ventana, devuelve el comando a enviar."""
@@ -432,6 +491,45 @@ class Panel:
     def config_publica(self):
         with self._lock:
             return self._config_copy()
+
+    def observar_serial(self, ip, texto, flujo="in", cuando=None):
+        """Anota un comando de Starcool, inyector o válvulas y la respuesta que le sigue."""
+        cuando = cuando or ahora()
+        texto = str(texto or "").strip()
+        if not texto or not ip:
+            return None
+        with self._lock:
+            return self._observar_cmd(str(ip), texto, "interfaz" if flujo == "out" else "serial", cuando)
+
+    def historial_comandos(self, desde_s, hasta_s, ip=None, origen=None, familia=None):
+        try:
+            desde = datetime.date.fromisoformat(str(desde_s))
+            hasta = datetime.date.fromisoformat(str(hasta_s))
+        except (TypeError, ValueError):
+            raise PanelError(400, "las fechas deben ir como AAAA-MM-DD")
+        if hasta < desde:
+            desde, hasta = hasta, desde
+        aviso = None
+        if (hasta - desde).days > 62:
+            desde = hasta - datetime.timedelta(days=62)
+            aviso = "El rango se ajustó a los últimos 62 días."
+        with self._lock:
+            filas = self._leer_comandos(desde, hasta)
+        if ip:
+            filas = [x for x in filas if x.get("ip") == ip]
+        if origen in ("serial", "interfaz"):
+            filas = [x for x in filas if x.get("origen") == origen]
+        if familia in ("starcool", "inyector", "valvulas"):
+            filas = [x for x in filas if x.get("familia") == familia]
+        pub = [_cmd_pub(x) for x in filas]
+        pub.sort(key=lambda x: x.get("t") or "", reverse=True)
+        return {
+            "desde": desde.isoformat(),
+            "hasta": hasta.isoformat(),
+            "aviso": aviso,
+            "total": len(pub),
+            "comandos": pub[:500],
+        }
 
     def lecturas(self, desde_s, hasta_s, ip=None):
         try:
@@ -618,6 +716,151 @@ class Panel:
                 fh.flush()
         except OSError as e:
             print(f"❌ No se pudo guardar la lectura: {e}")
+
+    def _observar_cmd(self, ip, texto, origen, cuando):
+        if self._cerrar_respuesta(ip, texto, cuando):
+            return None
+        familia = _familia_comando(texto)
+        if not familia:
+            return None
+        if origen == "serial" and self._es_eco(ip, texto, cuando):
+            return None
+        anterior = self._cmd_ultimo.get(ip)
+        delta = None if anterior is None else round((cuando - anterior).total_seconds(), 3)
+        self._cmd_seq += 1
+        item = {
+            "id": f"h{self._cmd_seq}",
+            "t": cuando.isoformat(timespec="seconds"),
+            "ip": ip,
+            "origen": origen,
+            "familia": familia,
+            "trama": texto[:240],
+            "delta_anterior_s": delta,
+            "respuesta": None,
+            "respuesta_en": None,
+        }
+        self._cmd_ultimo[ip] = cuando
+        espera = self._cmd_espera.setdefault(ip, [])
+        espera.append(item)
+        self._cmd_espera[ip] = espera[-12:]
+        if origen == "interfaz":
+            self._cmd_eco[ip] = (item["trama"], cuando)
+        self._guardar_cmd(item)
+        self._cmd_cache = None
+        return item["id"]
+
+    def _es_eco(self, ip, texto, cuando):
+        previo = self._cmd_eco.get(ip)
+        if not previo:
+            return False
+        trama, marca = previo
+        return trama == texto and (cuando - marca).total_seconds() <= 3
+
+    def _cerrar_respuesta(self, ip, texto, cuando):
+        espera = self._cmd_espera.get(ip) or []
+        vivos = []
+        elegido = None
+        for item in espera:
+            marca = _parse_iso(item.get("t"))
+            if marca is None or (cuando - marca).total_seconds() > 30 or item.get("respuesta"):
+                continue
+            vivos.append(item)
+            if _es_respuesta_cmd(item, texto):
+                elegido = item
+        self._cmd_espera[ip] = vivos
+        if elegido is None:
+            return False
+        elegido["respuesta"] = texto[:500]
+        elegido["respuesta_en"] = cuando.isoformat(timespec="seconds")
+        self._guardar_cmd({
+            "id": elegido["id"],
+            "t": elegido["respuesta_en"],
+            "respuesta": elegido["respuesta"],
+            "respuesta_en": elegido["respuesta_en"],
+        })
+        self._cmd_cache = None
+        return True
+
+    def _guardar_cmd(self, rec):
+        marca = str(rec.get("t") or "")
+        dia = marca[:10]
+        if len(dia) != 10:
+            dia = ahora().date().isoformat()
+        ruta = os.path.join(self.dir_cmd, dia + ".jsonl")
+        linea = json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n"
+        try:
+            with open(ruta, "a", encoding="utf-8") as fh:
+                fh.write(linea)
+                fh.flush()
+        except OSError as e:
+            print(f"❌ No se pudo guardar el comando: {e}")
+
+    def _restaurar_comandos(self):
+        hoy = ahora().date()
+        filas = self._leer_comandos(hoy - datetime.timedelta(days=1), hoy)
+        limite = ahora() - datetime.timedelta(seconds=30)
+        for item in filas:
+            ident = str(item.get("id") or "")
+            if ident.startswith("h") and ident[1:].isdigit():
+                self._cmd_seq = max(self._cmd_seq, int(ident[1:]))
+            marca = _parse_iso(item.get("t"))
+            ip = item.get("ip")
+            if not ip or marca is None:
+                continue
+            ultimo = self._cmd_ultimo.get(ip)
+            if ultimo is None or marca > ultimo:
+                self._cmd_ultimo[ip] = marca
+            if item.get("origen") == "interfaz":
+                self._cmd_eco[ip] = (item.get("trama") or "", marca)
+            if not item.get("respuesta") and marca >= limite:
+                self._cmd_espera.setdefault(ip, []).append(item)
+
+    def _leer_comandos(self, desde, hasta):
+        firmas = []
+        rutas = []
+        dia = desde
+        while dia <= hasta:
+            ruta = os.path.join(self.dir_cmd, dia.isoformat() + ".jsonl")
+            rutas.append(ruta)
+            try:
+                firmas.append(os.path.getsize(ruta))
+            except OSError:
+                firmas.append(0)
+            dia += datetime.timedelta(days=1)
+        firma = tuple(firmas)
+        if self._cmd_cache is not None and self._cmd_cache_firma == firma:
+            return list(self._cmd_cache)
+        por_id = {}
+        orden = []
+        for ruta in rutas:
+            if not os.path.exists(ruta):
+                continue
+            try:
+                fh = open(ruta, encoding="utf-8")
+            except OSError:
+                continue
+            with fh:
+                for linea in fh:
+                    linea = linea.strip()
+                    if not linea:
+                        continue
+                    try:
+                        rec = json.loads(linea)
+                    except json.JSONDecodeError:
+                        continue
+                    ident = rec.get("id")
+                    if not ident:
+                        continue
+                    if rec.get("trama"):
+                        por_id[ident] = rec
+                        orden.append(ident)
+                    elif ident in por_id and rec.get("respuesta"):
+                        por_id[ident]["respuesta"] = rec.get("respuesta")
+                        por_id[ident]["respuesta_en"] = rec.get("respuesta_en")
+        filas = [por_id[ident] for ident in orden if ident in por_id]
+        self._cmd_cache = filas
+        self._cmd_cache_firma = firma
+        return list(filas)
 
     def _anotar_ack(self, ip, texto, cuando):
         for item in reversed(self._cola):
@@ -1445,10 +1688,50 @@ def _test_historico(tmp):
     assert hora["o2"]["2"]["fin"] == 10.5
 
 
+def _test_comandos(tmp):
+    p = Panel(tmp)
+    ip = "10.0.0.8"
+    base = ahora().replace(microsecond=0)
+    p.observar_serial(ip, "STARCOOL:QUEST", "in", base)
+    p.observar_serial(ip, "STARCOOL_CONSULTA:6.2,5.1,8.1,4.1,10.4,11.8,80,90,100,1,0,0,1,0,0", "in", base + datetime.timedelta(seconds=2))
+    p.observar_serial(ip, "INYECTOR:ESTADO?", "in", base + datetime.timedelta(seconds=6))
+    p.observar_serial(ip, "INYECTOR:0000111111100000,1", "in", base + datetime.timedelta(seconds=7))
+    p.observar_serial(ip, "INYECTOR:VALCO211", "out", base + datetime.timedelta(seconds=12))
+    p.observar_serial(ip, "INYECTOR:VALCO211", "in", base + datetime.timedelta(seconds=12, milliseconds=400))
+    p.observar_serial(ip, "INYECTOR_OK", "in", base + datetime.timedelta(seconds=13))
+    p.observar_serial("10.9.9.9", "STARCOOL_OK", "in", base + datetime.timedelta(seconds=13))
+    hoy = base.date().isoformat()
+    filas = p.historial_comandos(hoy, hoy, ip)["comandos"]
+    assert [x["trama"] for x in filas] == ["INYECTOR:VALCO211", "INYECTOR:ESTADO?", "STARCOOL:QUEST"]
+    valvula = filas[0]
+    assert valvula["origen"] == "interfaz"
+    assert valvula["familia"] == "valvulas"
+    assert valvula["respuesta"] == "INYECTOR_OK"
+    assert valvula["espera_s"] == 1
+    assert valvula["delta_anterior_s"] == 6
+    estado = filas[1]
+    assert estado["origen"] == "serial"
+    assert estado["familia"] == "inyector"
+    assert estado["respuesta"] == "INYECTOR:0000111111100000,1"
+    assert estado["espera_s"] == 1
+    quest = filas[2]
+    assert quest["origen"] == "serial"
+    assert quest["familia"] == "starcool"
+    assert quest["respuesta"].startswith("STARCOOL_CONSULTA:")
+    assert quest["espera_s"] == 2
+    assert quest["delta_anterior_s"] is None
+    solo = p.historial_comandos(hoy, hoy, ip, familia="valvulas")["comandos"]
+    assert len(solo) == 1 and solo[0]["trama"] == "INYECTOR:VALCO211"
+    p2 = Panel(tmp)
+    otra = p2.historial_comandos(hoy, hoy, ip)["comandos"]
+    assert otra[0]["respuesta"] == "INYECTOR_OK"
+    assert otra[0]["delta_anterior_s"] == 6
+
+
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

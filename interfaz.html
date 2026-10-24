@@ -55,7 +55,7 @@
   .pill { padding: 8px 14px; color: var(--amber); white-space: nowrap; }
   .pill.ok { color: var(--green); border-color: #1f6b45; }
   .pill.lento { color: var(--amber); }
-  .tabs { display: flex; gap: 8px; padding: 0 20px 12px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; }
   .tabs button { padding: 8px 16px; cursor: pointer; border-radius: 999px; }
   .tabs button.activa { background: #1ea35a; border-color: transparent; color: #fff; }
   .marco {
@@ -65,8 +65,14 @@
     padding: 0 16px 24px;
     align-items: start;
   }
-  body[data-tab="hist"] .marco { grid-template-columns: 1fr; }
-  body[data-tab="hist"] #col-cmd { display: none; }
+  body[data-tab="hist"] .marco,
+  body[data-tab="cmdhist"] .marco { grid-template-columns: 1fr; }
+  body[data-tab="hist"] #col-cmd,
+  body[data-tab="cmdhist"] #col-cmd { display: none; }
+  tr.marcada td { background: #24304a; }
+  .origen-interfaz { color: var(--amber); }
+  .origen-serial { color: var(--blue); }
+  .corta { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
   main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   section.bloque, aside, .terminal, .aviso {
     background: var(--card);
@@ -233,6 +239,7 @@
   <button type="button" class="activa" data-tabbtn="vivo">En vivo</button>
   <button type="button" data-tabbtn="hist">Histórico O₂ / CO₂</button>
   <button type="button" data-tabbtn="serial">Serial</button>
+  <button type="button" data-tabbtn="cmdhist">Historial de comandos</button>
 </nav>
 <div class="marco">
   <main>
@@ -387,6 +394,35 @@
         <div class="tabla" id="tabla"></div>
       </section>
     </div>
+    <div id="tab-cmdhist" hidden>
+      <section class="bloque">
+        <h2>Historial de comandos</h2>
+        <p class="leyenda">Starcool, inyector y válvulas. Serial es lo que apareció en la línea del equipo. Interfaz es lo que salió desde este panel. El tiempo compara cada comando con el anterior del mismo serial, y la respuesta es lo que llegó después.</p>
+        <form id="form-cmdhist" class="rango">
+          <label>Desde<input type="date" id="cmd-desde"></label>
+          <label>Hasta<input type="date" id="cmd-hasta"></label>
+          <label>Origen
+            <select id="cmd-origen">
+              <option value="">Todos</option>
+              <option value="serial">Serial</option>
+              <option value="interfaz">Interfaz</option>
+            </select>
+          </label>
+          <label>Tipo
+            <select id="cmd-familia">
+              <option value="">Todos</option>
+              <option value="starcool">Starcool</option>
+              <option value="inyector">Inyector</option>
+              <option value="valvulas">Válvulas</option>
+            </select>
+          </label>
+          <button class="primario" type="submit">Ver</button>
+        </form>
+        <p class="leyenda" id="cmd-aviso"></p>
+        <p class="leyenda" id="cmd-compara">Elija dos filas para ver cuánto tiempo pasó entre esos comandos.</p>
+        <div class="tabla" id="cmd-tabla"></div>
+      </section>
+    </div>
     <div id="tab-serial" hidden>
       <section class="terminal">
         <pre id="log"></pre>
@@ -474,6 +510,8 @@ let firmaEditor = "";
 let firmaBotones = "";
 let comandosVivos = [];
 let modalItem = null;
+let marcasCmd = [];
+let firmaCmd = "";
 let falloRed = false;
 
 log.addEventListener("scroll", () => {
@@ -1293,7 +1331,9 @@ function ir(tab) {
   document.getElementById("tab-vivo").hidden = tab !== "vivo";
   document.getElementById("tab-hist").hidden = tab !== "hist";
   document.getElementById("tab-serial").hidden = tab !== "serial";
+  document.getElementById("tab-cmdhist").hidden = tab !== "cmdhist";
   if (tab === "hist") cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
+  if (tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
   if (tab === "serial" && pegado) log.scrollTop = log.scrollHeight;
 }
 
@@ -1308,6 +1348,8 @@ async function tick() {
   if (!fechasListas && data.hoy) {
     document.getElementById("desde").value = data.hoy;
     document.getElementById("hasta").value = data.hoy;
+    document.getElementById("cmd-desde").value = data.hoy;
+    document.getElementById("cmd-hasta").value = data.hoy;
     fechasListas = true;
   }
   pintarConexion(data);
@@ -1319,7 +1361,98 @@ async function tick() {
     llenarEtileno(data.config.etileno);
   }
   pintarCola(data.cola);
+  if (document.body.dataset.tab === "cmdhist") cargarComandos(true).catch(() => {});
   if (falloRed) { falloRed = false; }
+}
+
+function segs(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  const v = Math.round(Number(n) * 10) / 10;
+  return (Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1)) + " s";
+}
+const FAMILIA = {starcool: "Starcool", inyector: "Inyector", valvulas: "Válvulas"};
+function pintarComandos(data) {
+  const caja = document.getElementById("cmd-tabla");
+  const filas = (data && data.comandos) || [];
+  const firma = JSON.stringify(filas) + "|" + marcasCmd.join(",");
+  if (firma === firmaCmd && caja.childElementCount) return;
+  firmaCmd = firma;
+  caja.replaceChildren();
+  const aviso = data && data.aviso ? data.aviso + " " : "";
+  const total = data && data.total ? data.total : 0;
+  const cuenta = total
+    ? total + (total === 1 ? " comando." : " comandos.")
+    : "Todavía no hay comandos de Starcool, inyector o válvulas.";
+  setTexto("cmd-aviso", aviso + cuenta);
+  if (!filas.length) return;
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  ["Hora", "Desde el anterior", "Origen", "Tipo", "Comando", "Respuesta", "Tardó"].forEach(t => {
+    const th = document.createElement("th");
+    th.textContent = t;
+    head.appendChild(th);
+  });
+  table.appendChild(head);
+  filas.forEach(fila => {
+    const tr = document.createElement("tr");
+    tr.dataset.id = fila.id;
+    tr.dataset.t = fila.t || "";
+    if (marcasCmd.includes(fila.id)) tr.className = "marcada";
+    const celdas = [
+      fila.fecha || "",
+      segs(fila.delta_anterior_s),
+      fila.origen === "interfaz" ? "Interfaz" : "Serial",
+      FAMILIA[fila.familia] || fila.familia || "",
+      fila.trama || "",
+      fila.respuesta || "Sin respuesta",
+      fila.respuesta ? segs(fila.espera_s) : "—"
+    ];
+    celdas.forEach((texto, i) => {
+      const td = document.createElement("td");
+      td.textContent = texto;
+      if (i === 2) td.className = fila.origen === "interfaz" ? "origen-interfaz" : "origen-serial";
+      if (i === 4 || i === 5) {
+        td.className = ((td.className || "") + " corta").trim();
+        td.title = texto;
+      }
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  caja.appendChild(table);
+  pintarComparacion(filas);
+}
+function pintarComparacion(filas) {
+  const caja = document.getElementById("cmd-compara");
+  const elegidas = marcasCmd.map(id => (filas || []).find(f => f.id === id)).filter(Boolean);
+  if (elegidas.length < 2) {
+    caja.textContent = elegidas.length === 1
+      ? "Un comando marcado. Elija otro para comparar los tiempos."
+      : "Elija dos filas para ver cuánto tiempo pasó entre esos comandos.";
+    return;
+  }
+  const orden = elegidas.slice().sort((a, b) => String(a.t).localeCompare(String(b.t)));
+  const a = Date.parse(orden[0].t);
+  const b = Date.parse(orden[1].t);
+  const delta = Number.isFinite(a) && Number.isFinite(b) ? (b - a) / 1000 : null;
+  caja.textContent = "Entre " + (orden[0].fecha || "") + " (" + orden[0].trama + ") y " + (orden[1].fecha || "") + " (" + orden[1].trama + ") pasaron " + segs(delta) + ".";
+}
+async function cargarComandos(silencio) {
+  const desdeF = document.getElementById("cmd-desde").value;
+  const hastaF = document.getElementById("cmd-hasta").value;
+  if (!desdeF || !hastaF) return;
+  const q = new URLSearchParams({desde: desdeF, hasta: hastaF});
+  const origen = document.getElementById("cmd-origen").value;
+  const familia = document.getElementById("cmd-familia").value;
+  if (origen) q.set("origen", origen);
+  if (familia) q.set("familia", familia);
+  if (equipoElegido) q.set("ip", equipoElegido);
+  const respuesta = await fetch("/historial-comandos?" + q.toString());
+  if (sinSesion(respuesta)) return;
+  const data = await respuesta.json();
+  if (!respuesta.ok) throw new Error(data.detalle || "No se pudo leer el historial");
+  pintarComandos(data);
+  if (!silencio) mostrarAviso("Historial de comandos listo.", false);
 }
 
 document.querySelectorAll("[data-tabbtn]").forEach(b => b.addEventListener("click", () => ir(b.dataset.tabbtn)));
@@ -1445,6 +1578,31 @@ document.getElementById("cola").addEventListener("click", async (ev) => {
     mostrarAviso("Comando cancelado.", false);
     await tick();
   } catch (e) { mostrarAviso(e.message, true); }
+});
+document.getElementById("form-cmdhist").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  firmaCmd = "";
+  cargarComandos(false).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("cmd-origen").addEventListener("change", () => {
+  firmaCmd = "";
+  if (document.body.dataset.tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("cmd-familia").addEventListener("change", () => {
+  firmaCmd = "";
+  if (document.body.dataset.tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("cmd-tabla").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (!tr) return;
+  const id = tr.dataset.id;
+  if (marcasCmd.includes(id)) marcasCmd = marcasCmd.filter(x => x !== id);
+  else {
+    marcasCmd.push(id);
+    if (marcasCmd.length > 2) marcasCmd.shift();
+  }
+  firmaCmd = "";
+  cargarComandos(true).catch(e => mostrarAviso(e.message, true));
 });
 document.getElementById("form-hist").addEventListener("submit", (ev) => {
   ev.preventDefault();

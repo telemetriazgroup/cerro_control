@@ -532,6 +532,10 @@ def _publicar_serial(ip, texto, flujo, tipo):
             "texto": texto,
         })
         _aplicar_estado(ip, texto, flujo)
+    try:
+        panel.observar_serial(ip, texto, flujo)
+    except Exception as e:
+        print(f"❌ No se pudo anotar el comando {texto!r}: {e}")
 
 
 def _volcar_serial(sesion, chunk, flujo="in"):
@@ -990,6 +994,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             if equipo:
                 equipo = equipo.strip() or None
             self._json(200, snapshot_serial(desde, ip, equipo))
+        elif ruta == "/historial-comandos":
+            consulta = parse_qs(urlparse(self.path).query)
+            hoy = ahora().date().isoformat()
+            desde = (consulta.get("desde") or [hoy])[0]
+            hasta = (consulta.get("hasta") or [hoy])[0]
+            ip = (consulta.get("ip") or [None])[0]
+            origen = (consulta.get("origen") or [None])[0]
+            familia = (consulta.get("familia") or [None])[0]
+            if ip:
+                ip = ip.strip() or None
+            try:
+                self._json(200, panel.historial_comandos(desde, hasta, ip, origen, familia))
+            except PanelError as e:
+                self._json(e.status, {"ok": False, "detalle": e.detalle})
         else:
             self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
 
