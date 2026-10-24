@@ -128,6 +128,17 @@
   #rs article { margin-top: 8px; }
   #rs h3 { color: var(--green); font-family: ui-monospace, monospace; font-size: 0.82rem; }
   details summary { cursor: pointer; color: var(--text); }
+  details.plegado > summary {
+    color: var(--blue);
+    font-weight: 650;
+  }
+  details.plegado > summary::after { content: " · ver más"; color: var(--muted); font-weight: 450; }
+  details.plegado[open] > summary::after { content: " · ver menos"; }
+  #det-cmd > summary {
+    font-size: 0.95rem;
+    font-weight: 650;
+    margin-bottom: 8px;
+  }
   .rejilla { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
   label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 0.78rem; }
   input, select { border-radius: 8px; padding: 8px 10px; width: 100%; }
@@ -138,6 +149,13 @@
   aside { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; display: flex; flex-direction: column; gap: 12px; }
   .botones { display: flex; flex-wrap: wrap; gap: 6px; }
   .botones button { text-align: left; }
+  .cmd-linea { display: inline-flex; gap: 4px; align-items: stretch; max-width: 100%; }
+  .cmd-linea .cmd-ir { flex: 1; min-width: 0; }
+  .cmd-x { color: var(--red); padding: 8px 8px; }
+  .envios { max-height: 280px; overflow: auto; }
+  .hora { padding: 8px 0; border-top: 1px solid var(--line); }
+  .hora b { display: block; }
+  .hora p { margin: 2px 0; }
   .grupo-cmd p { margin: 8px 0 6px; color: var(--amber); font-size: 0.78rem; }
   .item-cola { padding: 8px 0; border-top: 1px solid var(--line); }
   .item-cola b { display: block; }
@@ -172,9 +190,21 @@
   .modal { width: min(480px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   .vacio { color: var(--muted); }
   @media (max-width: 980px) {
-    .marco, .zonas, .analisis, .valvulas, .salidas-grid { grid-template-columns: 1fr; }
+    .marco, .zonas, .analisis, .valvulas, .salidas-grid, .hums, .rejilla { grid-template-columns: 1fr; }
+    .comps { grid-template-columns: 1fr; }
+    header { align-items: flex-start; flex-direction: column; padding: 12px 12px 4px; }
+    .tabs, .marco { padding-left: 10px; padding-right: 10px; }
+    .gas strong, .hum strong, .eti-valor { font-size: 1.35rem; }
+    body { padding-bottom: 72px; }
+    #col-cmd {
+      position: fixed; left: 8px; right: 8px; top: auto; bottom: 8px; z-index: 25;
+      height: auto; max-height: 72vh; margin: 0;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+    }
+    #det-cmd:not([open]) { padding-bottom: 0; }
+    #det-cmd:not([open]) > summary { margin-bottom: 0; }
+    .aviso { bottom: 72px; }
     aside { position: static; max-height: none; }
-    header { align-items: flex-start; flex-direction: column; }
   }
 </style>
 </head>
@@ -194,6 +224,8 @@
     </div>
     <select id="ip" hidden></select>
     <button type="button" id="refrescar">Actualizar</button>
+    <button type="button" id="abrir-cmd">Comandos</button>
+    <button type="button" id="salir">Salir</button>
     <div class="pill" id="conexion">Esperando equipo</div>
   </div>
 </header>
@@ -221,12 +253,14 @@
         <p class="leyenda" id="paso-texto">El comando encolado sale justo después de STARCOOL:PLATAFORMA.</p>
       </section>
       <section class="bloque">
-        <h2>Sensores</h2>
-        <p class="mono" id="d02-raw">Esperando STARCOOL_CONSULTA</p>
-        <p class="leyenda" id="gases-en"></p>
-        <p class="leyenda" id="obj-leyenda"></p>
-        <p class="leyenda">Si CO₂ u O₂ llegan en 0 o 25.5, se muestra el último valor válido y se conserva la flecha. La humedad sí muestra 0. Estado 11, 12 y 13: control de la zona, 1 = activo.</p>
-        <p class="vacio" id="vacio">Esperando el ciclo del controlador.</p>
+        <details class="plegado" id="det-sensores">
+          <summary>Sensores</summary>
+          <p class="mono" id="d02-raw">Esperando STARCOOL_CONSULTA</p>
+          <p class="leyenda" id="gases-en"></p>
+          <p class="leyenda" id="obj-leyenda"></p>
+          <p class="leyenda">Si CO₂ u O₂ llegan en 0 o 25.5, se muestra el último valor válido y se conserva la flecha. Un 0 de humedad también es reinicio: se muestra el último valor mayor de 50 % y hasta 100 %. Estado 11, 12 y 13: control de la zona, 1 = activo.</p>
+          <p class="vacio" id="vacio">Esperando el ciclo del controlador.</p>
+        </details>
       </section>
       <section class="bloque">
         <details id="det-obj">
@@ -264,18 +298,14 @@
       <section class="bloque">
         <h2>Humedad</h2>
         <div class="hums">
-          <div class="hum" id="hum-1"><span>Zona 1 humedad</span><strong>—</strong></div>
-          <div class="hum" id="hum-2"><span>Zona 2 humedad</span><strong>—</strong></div>
-          <div class="hum" id="hum-3"><span>Zona 3 humedad</span><strong>—</strong></div>
+          <div class="hum" id="hum-1"><span>Zona 1 humedad</span><strong>—</strong><small class="nota"></small></div>
+          <div class="hum" id="hum-2"><span>Zona 2 humedad</span><strong>—</strong><small class="nota"></small></div>
+          <div class="hum" id="hum-3"><span>Zona 3 humedad</span><strong>—</strong><small class="nota"></small></div>
         </div>
       </section>
       <section class="bloque">
         <h2>Estados adicionales</h2>
         <div id="estados" class="botones"></div>
-      </section>
-      <section class="bloque">
-        <h2>Canal rs</h2>
-        <div id="rs"><p>Aún no llega RIPENER ni REEFER_QUEST.</p></div>
       </section>
       <section class="bloque">
         <h2>Inyectores</h2>
@@ -285,11 +315,10 @@
         <div id="valvulas"></div>
       </section>
       <section class="bloque">
-        <h2>STARCOOL_SALIDAS</h2>
-        <p class="mono" id="salidas-raw"></p>
-        <div class="salidas-grid" id="salidas-vista"></div>
-        <details>
-          <summary>Editar qué significa cada campo</summary>
+        <details class="plegado" id="det-salidas">
+          <summary>STARCOOL_SALIDAS</summary>
+          <p class="mono" id="salidas-raw"></p>
+          <div class="salidas-grid" id="salidas-vista"></div>
           <div id="salidas-editor"></div>
           <div class="acciones"><button type="button" id="guardar-salidas" class="primario">Guardar significados</button></div>
         </details>
@@ -310,7 +339,13 @@
         </details>
       </section>
       <section class="bloque">
-        <details>
+        <details class="plegado" id="det-rs">
+          <summary>Canal rs</summary>
+          <div id="rs"><p>Aún no llega RIPENER ni REEFER_QUEST.</p></div>
+        </details>
+      </section>
+      <section class="bloque">
+        <details class="plegado">
           <summary>Datos total</summary>
           <pre id="datos" class="mono"></pre>
         </details>
@@ -329,19 +364,23 @@
       </section>
       <div class="analisis" id="analisis"></div>
       <section class="bloque">
-        <h2>CO₂ por zona</h2>
+        <h2>CO₂ y O₂</h2>
+        <div class="rango" id="gases-graf">
+          <label><input type="checkbox" data-gas="co2" checked> CO₂</label>
+          <label><input type="checkbox" data-gas="o2" checked> O₂</label>
+        </div>
         <div class="rango" id="zonas-graf">
           <label><input type="checkbox" data-zona="1" checked> Zona 1</label>
           <label><input type="checkbox" data-zona="2" checked> Zona 2</label>
           <label><input type="checkbox" data-zona="3" checked> Zona 3</label>
         </div>
-        <div class="grafica" id="graf-co2"></div>
-        <p class="leyenda" id="lectura-co2"></p>
-      </section>
-      <section class="bloque">
-        <h2>O₂ por zona</h2>
-        <div class="grafica" id="graf-o2"></div>
-        <p class="leyenda" id="lectura-o2"></p>
+        <p class="leyenda">CO₂ y O₂ de la misma zona se dibujan juntos. Con la zona 1 activa se ven las dos curvas de esa zona.</p>
+        <div class="grafica" id="graf-mix"></div>
+        <p class="leyenda" id="lectura-mix"></p>
+        <p class="leyenda" id="leyenda-graf"></p>
+        <h2>Evolución por hora</h2>
+        <p class="leyenda">De hora en hora, con las curvas que están activas. El 0 y el 25.5 no entran: se usa el último valor válido.</p>
+        <div id="horas-graf"></div>
       </section>
       <section class="bloque">
         <h2>Últimas lecturas</h2>
@@ -356,14 +395,20 @@
     </div>
   </main>
   <aside id="col-cmd">
+    <details id="det-cmd" open>
+    <summary id="cmd-titulo">Comandos</summary>
     <div>
-      <h2 id="cmd-titulo">Comandos</h2>
       <p class="leyenda">Se encolan y salen de a uno, después de STARCOOL:PLATAFORMA, en la ventana de 2 a 3 segundos.</p>
       <div id="botones"></div>
     </div>
     <div>
       <h2 id="cola-titulo">Cola</h2>
       <div id="cola"></div>
+    </div>
+    <div>
+      <h2 id="envios-titulo">Envíos</h2>
+      <p class="leyenda">Hora en que salió por el serial, si el equipo lo recibió y qué respondió.</p>
+      <div class="envios" id="envios"></div>
     </div>
     <form id="libre">
       <label>Trama libre<input id="trama-libre" autocomplete="off" placeholder="INYECTOR:&O0" spellcheck="false"></label>
@@ -377,6 +422,7 @@
         <button type="button" id="agregar-cmd">Agregar comando</button>
         <button type="button" id="guardar-cmd" class="primario">Guardar catálogo</button>
       </div>
+    </details>
     </details>
   </aside>
 </div>
@@ -426,6 +472,7 @@ let firmaSal = "";
 let firmaEti = "";
 let firmaEditor = "";
 let firmaBotones = "";
+let comandosVivos = [];
 let modalItem = null;
 let falloRed = false;
 
@@ -526,7 +573,10 @@ function pintarVivo(panel) {
     card.querySelector("small").textContent = "Estado " + (13 + c.numero) + ": " + (c.valor == null ? "—" : c.valor);
   });
   (panel.humedad || []).forEach(h => {
-    document.querySelector("#hum-" + h.zona + " strong").textContent = h.valor == null ? "—" : fmt(h.valor) + " %";
+    const card = document.getElementById("hum-" + h.zona);
+    const marca = h.valor == null ? "" : flecha(h.tendencia);
+    card.querySelector("strong").textContent = (h.valor == null ? "—" : fmt(h.valor) + " %") + (marca ? " " + marca : "");
+    card.querySelector(".nota").textContent = h.reinicio && h.valor != null ? "Último válido · reinicio" : "";
   });
   pintarLista("estados", JSON.stringify(panel.estados || []), (caja) => {
     if (!(panel.estados || []).length) caja.textContent = "Sin estados adicionales.";
@@ -687,14 +737,15 @@ function llenarEtileno(eti) {
 }
 
 function pintarBotones(comandos) {
-  const f = JSON.stringify(comandos || []);
+  comandosVivos = comandos || [];
+  const f = JSON.stringify(comandosVivos);
   if (f === firmaBotones) return;
   firmaBotones = f;
   const caja = document.getElementById("botones");
   caja.replaceChildren();
   const grupos = [];
   const mapa = new Map();
-  (comandos || []).forEach(item => {
+  comandosVivos.forEach(item => {
     const nombre = item.grupo || "General";
     if (!mapa.has(nombre)) { mapa.set(nombre, []); grupos.push(nombre); }
     mapa.get(nombre).push(item);
@@ -707,12 +758,22 @@ function pintarBotones(comandos) {
     const botones = document.createElement("div");
     botones.className = "botones";
     mapa.get(nombre).forEach(item => {
+      const linea = document.createElement("span");
+      linea.className = "cmd-linea";
       const boton = document.createElement("button");
       boton.type = "button";
+      boton.className = "cmd-ir";
       boton.textContent = item.titulo;
       boton.title = item.trama + (item.descripcion ? " — " + item.descripcion : "");
       boton.addEventListener("click", () => abrirModal(item));
-      botones.appendChild(boton);
+      const quitar = document.createElement("button");
+      quitar.type = "button";
+      quitar.className = "cmd-x";
+      quitar.dataset.quitar = item.id;
+      quitar.textContent = "Quitar";
+      quitar.title = "Eliminar este comando del listado";
+      linea.append(boton, quitar);
+      botones.appendChild(linea);
     });
     bloque.append(titulo, botones);
     caja.appendChild(bloque);
@@ -761,19 +822,63 @@ function pintarCola(cola) {
   setTexto("cola-titulo", "Cola" + (pendientes.length ? " · " + pendientes.length : ""));
   setTexto("cmd-titulo", "Comandos" + (pendientes.length ? " · " + pendientes.length + " en cola" : ""));
   const caja = document.getElementById("cola");
-  const firma = JSON.stringify(cola || {});
+  const firma = JSON.stringify(pendientes);
+  if (caja.dataset.firma !== firma) {
+    caja.dataset.firma = firma;
+    caja.replaceChildren();
+    if (!pendientes.length) {
+      const p = document.createElement("p");
+      p.className = "leyenda";
+      p.textContent = "No hay comandos en espera.";
+      caja.appendChild(p);
+    } else {
+      pendientes.forEach(item => caja.appendChild(filaCola(item, true)));
+    }
+  }
+  pintarEnvios(recientes);
+}
+function pintarEnvios(recientes) {
+  const caja = document.getElementById("envios");
+  const firma = JSON.stringify(recientes || []);
   if (caja.dataset.firma === firma) return;
   caja.dataset.firma = firma;
   caja.replaceChildren();
-  if (!pendientes.length && !recientes.length) {
+  setTexto("envios-titulo", "Envíos" + (recientes.length ? " · " + recientes.length : ""));
+  if (!recientes.length) {
     const p = document.createElement("p");
     p.className = "leyenda";
-    p.textContent = "No hay comandos en espera.";
+    p.textContent = "Todavía no se envió ningún comando.";
     caja.appendChild(p);
     return;
   }
-  pendientes.forEach(item => caja.appendChild(filaCola(item, true)));
-  recientes.forEach(item => caja.appendChild(filaCola(item, false)));
+  recientes.forEach(item => caja.appendChild(filaEnvio(item)));
+}
+function filaEnvio(item) {
+  const fila = document.createElement("div");
+  fila.className = "item-cola";
+  const b = document.createElement("b");
+  b.textContent = item.titulo || item.trama;
+  const s = document.createElement("span");
+  s.textContent = textoEnvio(item);
+  fila.append(b, s);
+  return fila;
+}
+function textoEnvio(item) {
+  const trama = item.trama || "";
+  const donde = item.ip_envio ? " · " + item.ip_envio : "";
+  if (item.estado === 2) {
+    return trama + " · no salió por el serial" + (item.error ? " · " + item.error : "") + donde;
+  }
+  const cuando = item.enviado_display || "sin hora";
+  if (item.recibido === true) {
+    const resp = item.ack || "OK";
+    const aLas = item.ack_en_display ? " a las " + item.ack_en_display : "";
+    return trama + " · enviado " + cuando + " · el equipo respondió " + resp + aLas + donde;
+  }
+  if (item.recibido === false) {
+    return trama + " · enviado " + cuando + " · el equipo no respondió" + donde;
+  }
+  return trama + " · enviado " + cuando + " · esperando respuesta del equipo" + donde;
 }
 function filaCola(item, pendiente) {
   const fila = document.createElement("div");
@@ -806,12 +911,18 @@ function abrirModal(item) {
 }
 function cerrarModal() { document.getElementById("modal").hidden = true; modalItem = null; }
 
+function sinSesion(respuesta) {
+  if (respuesta.status !== 401) return false;
+  location.href = "/login";
+  return true;
+}
 async function postJson(url, cuerpo) {
   const respuesta = await fetch(url, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(cuerpo)
   });
+  if (sinSesion(respuesta)) throw new Error("hay que iniciar sesión");
   const data = await respuesta.json();
   if (!respuesta.ok) throw new Error(data.detalle || "No se pudo completar");
   return data;
@@ -890,28 +1001,45 @@ function horaLima(ms, conFecha) {
   return conFecha ? get("day") + "/" + get("month") + " " + hora : hora;
 }
 
-function zonasVisibles() {
-  return [...document.querySelectorAll("#zonas-graf input:checked")].map(el => Number(el.dataset.zona));
+function seriesElegidas() {
+  const gases = [...document.querySelectorAll("#gases-graf input:checked")].map(el => el.dataset.gas);
+  const zonas = [...document.querySelectorAll("#zonas-graf input:checked")].map(el => Number(el.dataset.zona));
+  const series = [];
+  zonas.forEach(zona => gases.forEach(gas => series.push({ gas, zona })));
+  return series;
 }
 
-function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
-  const host = document.getElementById(hostId);
-  const lectura = document.getElementById(lecturaId);
+function techoEscala(pico) {
+  if (!Number.isFinite(pico) || pico <= 15) return 15;
+  return pico + 5;
+}
+function dibujar(puntos, objetivos, porHora) {
+  const host = document.getElementById("graf-mix");
+  const lectura = document.getElementById("lectura-mix");
+  const leyenda = document.getElementById("leyenda-graf");
   host.replaceChildren();
   lectura.textContent = "";
-  const zonas = zonasVisibles();
+  leyenda.textContent = "";
+  const series = seriesElegidas();
   if (!puntos || !puntos.length) {
     host.textContent = "No hay lecturas en este rango.";
+    pintarHoras(porHora, series);
     return;
   }
-  const width = 720, height = 250, padL = 46, padR = 12, padT = 16, padB = 28;
-  let min = Infinity, max = -Infinity;
-  const toma = v => { if (v == null || Number.isNaN(Number(v))) return; min = Math.min(min, Number(v)); max = Math.max(max, Number(v)); };
-  puntos.forEach(p => zonas.forEach(z => toma(p[clave][z - 1])));
-  zonas.forEach(z => toma(objetivos && objetivos[clave] && objetivos[clave][String(z)]));
-  if (!Number.isFinite(min)) { host.textContent = "No hay valores válidos para graficar."; return; }
-  const margen = Math.max(0.4, (max - min) * 0.15);
-  min -= margen; max += margen;
+  if (!series.length) {
+    host.textContent = "Hace falta al menos un gas y una zona.";
+    pintarHoras(porHora, series);
+    return;
+  }
+  const width = 720, height = 280, padL = 46, padR = 16, padT = 18, padB = 28;
+  let pico = -Infinity;
+  const toma = v => { if (v == null || Number.isNaN(Number(v))) return; pico = Math.max(pico, Number(v)); };
+  const valorDe = (p, s) => p[s.gas][s.zona - 1];
+  puntos.forEach(p => series.forEach(s => toma(valorDe(p, s))));
+  series.forEach(s => toma(objetivos && objetivos[s.gas] && objetivos[s.gas][String(s.zona)]));
+  if (!Number.isFinite(pico)) { host.textContent = "No hay valores válidos para graficar."; pintarHoras(porHora, series); return; }
+  const min = 0;
+  const max = techoEscala(pico);
   const t0 = Date.parse(puntos[0].t), t1 = Date.parse(puntos[puntos.length - 1].t);
   const span = Math.max(1, t1 - t0);
   const xDe = t => padL + ((Date.parse(t) - t0) / span) * (width - padL - padR);
@@ -923,8 +1051,10 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
     const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
     return m ? (mismoDia ? m[4] : m[3] + "/" + m[2] + " " + m[4]) : "";
   };
-  for (let i = 0; i < 4; i++) {
-    const valor = min + (max - min) * (i / 3);
+  const marcas = [0];
+  for (let v = 5; v < max - 1.2; v += 5) marcas.push(v);
+  if (max > 0) marcas.push(max);
+  marcas.forEach(valor => {
     const y = yDe(valor);
     svg.appendChild(lineaSvg(padL, y, width - padR, y, "#2a3a58", ""));
     const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -932,7 +1062,7 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
     texto.setAttribute("fill", "#8ea0c4"); texto.setAttribute("font-size", "11");
     texto.textContent = fmt(valor);
     svg.appendChild(texto);
-  }
+  });
   [0, 0.5, 1].forEach(f => {
     const x = padL + f * (width - padL - padR);
     const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -945,10 +1075,15 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
     else texto.textContent = horaLima(t0 + span * f, !mismoDia);
     svg.appendChild(texto);
   });
-  zonas.forEach(z => {
-    const color = COLORES[z - 1];
-    const obj = objetivos && objetivos[clave] && Number(objetivos[clave][String(z)]);
-    if (Number.isFinite(obj)) svg.appendChild(lineaSvg(padL, yDe(obj), width - padR, yDe(obj), color, "4 4"));
+  const nombres = [];
+  const candidatos = [];
+  series.forEach(s => {
+    const color = COLORES[s.zona - 1];
+    const gas = s.gas === "co2" ? "CO₂" : "O₂";
+    const dash = s.gas === "o2" ? "7 4" : "";
+    nombres.push(gas + " zona " + s.zona);
+    const obj = objetivos && objetivos[s.gas] && Number(objetivos[s.gas][String(s.zona)]);
+    if (Number.isFinite(obj)) svg.appendChild(lineaSvg(padL, yDe(obj), width - padR, yDe(obj), color, "2 5"));
     let tramo = [];
     const volcar = () => {
       if (tramo.length >= 2) {
@@ -957,6 +1092,7 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
         poly.setAttribute("fill", "none");
         poly.setAttribute("stroke", color);
         poly.setAttribute("stroke-width", "2");
+        if (dash) poly.setAttribute("stroke-dasharray", dash);
         svg.appendChild(poly);
       } else if (tramo.length === 1) {
         const [cx, cy] = tramo[0].split(",");
@@ -966,13 +1102,56 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
       }
       tramo = [];
     };
-    puntos.forEach(p => {
-      const valor = p[clave][z - 1];
+    const etiquetar = [];
+    puntos.forEach((p, i) => {
+      const valor = valorDe(p, s);
       if (valor == null) volcar();
-      else tramo.push(xDe(p.t).toFixed(1) + "," + yDe(valor).toFixed(1));
+      else {
+        const x = xDe(p.t);
+        const y = yDe(valor);
+        tramo.push(x.toFixed(1) + "," + y.toFixed(1));
+        etiquetar.push({ i, x, y, valor });
+      }
     });
     volcar();
+    const pasoEtiqueta = etiquetar.length <= 24 ? 1 : Math.ceil(etiquetar.length / 14);
+    let ultimoX = -999;
+    etiquetar.forEach((punto, n) => {
+      const ultimo = n === etiquetar.length - 1;
+      if (!ultimo && n % pasoEtiqueta !== 0) return;
+      if (!ultimo && punto.x - ultimoX < 34) return;
+      ultimoX = punto.x;
+      candidatos.push({
+        x: punto.x,
+        y: punto.y + (s.gas === "co2" ? -6 : 11),
+        valor: punto.valor,
+        color
+      });
+    });
   });
+  const puestos = [];
+  candidatos.forEach(c => {
+    let ty = Math.min(height - padB - 2, Math.max(12, c.y));
+    for (let i = 0; i < 8; i++) {
+      const libre = ty > 10 && ty < height - 8 && !puestos.some(p => Math.abs(p.x - c.x) < 28 && Math.abs(p.y - ty) < 11);
+      if (libre) {
+        puestos.push({ x: c.x, y: ty });
+        const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        texto.setAttribute("x", String(c.x));
+        texto.setAttribute("y", String(ty));
+        texto.setAttribute("text-anchor", "middle");
+        texto.setAttribute("fill", c.color);
+        texto.setAttribute("font-size", "9");
+        texto.textContent = fmt(c.valor);
+        svg.appendChild(texto);
+        break;
+      }
+      const paso = (Math.floor(i / 2) + 1) * 11;
+      ty = Math.min(height - padB - 2, Math.max(12, c.y + (i % 2 === 0 ? -paso : paso)));
+    }
+  });
+  leyenda.textContent = "Escala 0–" + fmt(max) + " %. Curva continua: CO₂. Curva cortada: O₂. " + nombres.join(" · ");
+  pintarHoras(porHora, series);
   host.appendChild(svg);
   svg.addEventListener("mousemove", ev => {
     const rect = svg.getBoundingClientRect();
@@ -983,8 +1162,52 @@ function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
       if (d < dist) { dist = d; mejor = i; }
     });
     const p = puntos[mejor];
-    lectura.textContent = etiqueta(p.t) + " · " + zonas.map(z => "Z" + z + " " + fmt(p[clave][z - 1]) + " %").join("  ");
+    lectura.textContent = etiqueta(p.t) + " · " + series.map(s => {
+      const gas = s.gas === "co2" ? "CO₂" : "O₂";
+      return "Z" + s.zona + " " + gas + " " + fmt(valorDe(p, s)) + " %";
+    }).join("  ");
   });
+}
+function fraseHora(celda, gas, zona) {
+  const nombre = (gas === "co2" ? "CO₂" : "O₂") + " zona " + zona;
+  if (!celda || !celda.n) return "";
+  const extra = " Mín " + fmt(celda.min) + " %, máx " + fmt(celda.max) + " %, " + celda.n + " lecturas.";
+  if (Math.abs(celda.delta) < 0.05) return nombre + " se mantuvo en " + fmt(celda.fin) + " %." + extra;
+  const verbo = celda.delta > 0 ? "subió" : "bajó";
+  return nombre + " pasó de " + fmt(celda.inicio) + " % a " + fmt(celda.fin) + " % (" + verbo + " " + fmt(Math.abs(celda.delta)) + ")." + extra;
+}
+function pintarHoras(porHora, series) {
+  const caja = document.getElementById("horas-graf");
+  if (!caja) return;
+  caja.replaceChildren();
+  const horas = porHora || [];
+  if (!series.length) {
+    caja.textContent = "Activa al menos un gas y una zona para ver la evolución.";
+    return;
+  }
+  if (!horas.length) {
+    caja.textContent = "Todavía no hay una hora con lecturas.";
+    return;
+  }
+  let alguna = false;
+  horas.forEach(hora => {
+    const lineas = series.map(s => fraseHora(hora[s.gas] && hora[s.gas][String(s.zona)], s.gas, s.zona)).filter(Boolean);
+    if (!lineas.length) return;
+    alguna = true;
+    const art = document.createElement("article");
+    art.className = "hora";
+    const titulo = document.createElement("b");
+    titulo.textContent = hora.etiqueta;
+    art.appendChild(titulo);
+    lineas.forEach(texto => {
+      const p = document.createElement("p");
+      p.className = "leyenda";
+      p.textContent = texto;
+      art.appendChild(p);
+    });
+    caja.appendChild(art);
+  });
+  if (!alguna) caja.textContent = "En esas horas no hay valores válidos para las curvas activas.";
 }
 function lineaSvg(x1, y1, x2, y2, color, dash) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -1049,14 +1272,14 @@ async function cargarLecturas(silencio) {
   const q = new URLSearchParams({desde: desdeF, hasta: hastaF});
   if (equipoElegido) q.set("ip", equipoElegido);
   const respuesta = await fetch("/lecturas?" + q.toString());
+  if (sinSesion(respuesta)) return;
   const data = await respuesta.json();
   if (!respuesta.ok) throw new Error(data.detalle || "No se pudo leer el histórico");
   ultimaHist = data;
   const avisoHist = data.aviso || (data.muestreada ? "La gráfica muestra " + data.grafica + " de " + data.total + " lecturas. El análisis usa todas." : data.total + " lecturas.");
   setTexto("hist-aviso", avisoHist);
   pintarAnalisis(data);
-  dibujar("graf-co2", "lectura-co2", "co2", data.puntos, data.objetivos);
-  dibujar("graf-o2", "lectura-o2", "o2", data.puntos, data.objetivos);
+  dibujar(data.puntos, data.objetivos, data.por_hora);
   pintarTabla(data.tabla);
   if (!silencio) mostrarAviso("Histórico listo.", false);
 }
@@ -1077,6 +1300,7 @@ function ir(tab) {
 async function tick() {
   const q = equipoElegido ? "&equipo=" + encodeURIComponent(equipoElegido) : "";
   const respuesta = await fetch("/serial?desde=" + desde + q);
+  if (sinSesion(respuesta)) return;
   const data = await respuesta.json();
   if (data.lineas && data.lineas.length) pintarLineas(data.lineas);
   if (typeof data.siguiente === "number") desde = data.siguiente;
@@ -1104,6 +1328,10 @@ document.getElementById("ip").addEventListener("change", () => {
   log.replaceChildren();
   desde = 0;
   tick().catch(() => {});
+});
+document.getElementById("salir").addEventListener("click", async () => {
+  await fetch("/salir", {method: "POST"});
+  location.href = "/login";
 });
 document.getElementById("refrescar").addEventListener("click", () => {
   tick().catch(e => mostrarAviso(e.message, true));
@@ -1223,9 +1451,44 @@ document.getElementById("form-hist").addEventListener("submit", (ev) => {
   cargarLecturas(false).catch(e => mostrarAviso(e.message, true));
 });
 document.getElementById("zonas-graf").addEventListener("change", () => {
-  if (!ultimaHist) return;
-  dibujar("graf-co2", "lectura-co2", "co2", ultimaHist.puntos, ultimaHist.objetivos);
-  dibujar("graf-o2", "lectura-o2", "o2", ultimaHist.puntos, ultimaHist.objetivos);
+  if (ultimaHist) dibujar(ultimaHist.puntos, ultimaHist.objetivos, ultimaHist.por_hora);
+});
+document.getElementById("gases-graf").addEventListener("change", () => {
+  if (ultimaHist) dibujar(ultimaHist.puntos, ultimaHist.objetivos, ultimaHist.por_hora);
+});
+document.getElementById("botones").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-quitar]");
+  if (!btn) return;
+  const id = btn.dataset.quitar;
+  const item = comandosVivos.find(c => c.id === id);
+  const nombre = item ? item.titulo : "este comando";
+  if (!window.confirm("¿Quitar «" + nombre + "» del listado?")) return;
+  const base = editorSucio ? leerCatalogo() : comandosVivos;
+  btn.disabled = true;
+  guardando = true;
+  try {
+    const data = await postJson("/comandos", {comandos: base.filter(c => c.id !== id)});
+    editorSucio = false;
+    firmaEditor = "";
+    firmaBotones = "";
+    pintarBotones(data.comandos);
+    pintarEditor(data.comandos);
+    mostrarAviso(nombre + " salió del listado.", false);
+  } catch (e) {
+    mostrarAviso(e.message, true);
+    btn.disabled = false;
+  } finally { guardando = false; }
+});
+const vistaMovil = window.matchMedia("(max-width: 980px)");
+const plegarCmd = () => {
+  if (vistaMovil.matches) document.getElementById("det-cmd").open = false;
+};
+plegarCmd();
+vistaMovil.addEventListener("change", plegarCmd);
+document.getElementById("abrir-cmd").addEventListener("click", () => {
+  const det = document.getElementById("det-cmd");
+  det.open = !det.open;
+  det.scrollIntoView({block: "nearest"});
 });
 
 tick().catch(e => mostrarAviso(e.message, true));

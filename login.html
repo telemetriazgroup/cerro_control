@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cerro Prieto · acceso</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: radial-gradient(900px 420px at 15% -10%, #17304a 0%, transparent 55%), #0c1220;
+    color: #e7eefb; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; padding: 16px;
+  }
+  form {
+    width: min(380px, 100%); background: #141c2e; border: 1px solid #2a3a58;
+    border-radius: 16px; padding: 22px;
+  }
+  .marca { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .marca span {
+    width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+    background: #12382c; color: #3dd68c; font-weight: 700;
+  }
+  h1 { margin: 0; font-size: 1.2rem; }
+  p { margin: 2px 0 0; color: #8ea0c4; }
+  label { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; color: #8ea0c4; font-size: 0.82rem; }
+  input {
+    font: inherit; color: #e7eefb; background: #10182a; border: 1px solid #2a3a58;
+    border-radius: 10px; padding: 10px 12px; width: 100%;
+  }
+  button {
+    margin-top: 16px; width: 100%; font: inherit; color: #fff; cursor: pointer;
+    background: #1b6b40; border: 0; border-radius: 10px; padding: 10px 12px;
+  }
+  .error { color: #ff8b84; margin-top: 12px; }
+</style>
+</head>
+<body>
+<form method="post" action="/login" autocomplete="on">
+  <div class="marca"><span>CP</span><div><h1>Cerro Prieto</h1><p>Atmósfera controlada</p></div></div>
+  <label>Usuario<input name="usuario" autocomplete="username" required autofocus></label>
+  <label>Contraseña<input name="clave" type="password" autocomplete="current-password" required></label>
+  <p class="error" id="error" hidden>Usuario o contraseña incorrectos.</p>
+  <button type="submit">Entrar</button>
+</form>
+<script>
+const marca = new URLSearchParams(location.search).get("e");
+if (marca === "1" || marca === "2") {
+  const aviso = document.getElementById("error");
+  aviso.hidden = false;
+  if (marca === "2") aviso.textContent = "Demasiados intentos. Espere unos minutos.";
+}
+</script>
+</body>
+</html>

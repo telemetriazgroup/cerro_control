@@ -138,16 +138,46 @@ def partir_csv(texto):
     return salida
 
 
+def humedad_valida(valor):
+    """Una humedad usable está por encima de 50 y hasta 100. 0 y 25.5 son reinicio."""
+    n = _num(valor)
+    if n is None or es_reinicio(n) or n <= 50 or n > 100:
+        return False
+    return True
+
+
 def paso_gas(prev_valor, prev_tend, crudo):
     """Aplica la regla de 0 y 25.5 y conserva la flecha si el valor se repite."""
+    return _paso_medida(prev_valor, prev_tend, crudo, es_reinicio)
+
+
+def paso_humedad(prev_valor, prev_tend, crudo):
+    """0, 25.5 o un valor fuera de 50–100 no pisan la última humedad válida."""
     crudo = _num(crudo)
-    if crudo is None or es_reinicio(crudo):
+    invalida = crudo is None or not humedad_valida(crudo)
+    if invalida:
         return {
             "valor": prev_valor,
             "crudo": crudo,
-            "reinicio": crudo is not None and es_reinicio(crudo),
+            "reinicio": crudo is not None,
             "tendencia": prev_tend if prev_valor is not None else None,
         }, prev_valor, prev_tend
+    return _cerrar_medida(prev_valor, prev_tend, crudo)
+
+
+def _paso_medida(prev_valor, prev_tend, crudo, es_invalida):
+    crudo = _num(crudo)
+    if crudo is None or es_invalida(crudo):
+        return {
+            "valor": prev_valor,
+            "crudo": crudo,
+            "reinicio": crudo is not None and es_invalida(crudo),
+            "tendencia": prev_tend if prev_valor is not None else None,
+        }, prev_valor, prev_tend
+    return _cerrar_medida(prev_valor, prev_tend, crudo)
+
+
+def _cerrar_medida(prev_valor, prev_tend, crudo):
     if prev_valor is None:
         tend = None
     elif math.isclose(crudo, prev_valor, rel_tol=0, abs_tol=1e-4):
@@ -187,11 +217,16 @@ def clasificar_paso(texto):
     return None
 
 
+def _celda_vacia():
+    return {"valor": None, "crudo": None, "reinicio": False, "tendencia": None}
+
+
 def _celdas_vacias():
-    return [
-        {"valor": None, "crudo": None, "reinicio": False, "tendencia": None}
-        for _ in range(6)
-    ]
+    return [_celda_vacia() for _ in range(6)]
+
+
+def _humedad_vacia():
+    return [_celda_vacia() for _ in range(3)]
 
 
 def _nuevo_estado(ip):
@@ -208,6 +243,7 @@ def _nuevo_estado(ip):
         "d02": "",
         "d02_en": None,
         "celdas": _celdas_vacias(),
+        "hum_celdas": _humedad_vacia(),
         "salidas": "",
         "salidas_en": None,
         "etileno": None,
@@ -390,8 +426,8 @@ class Panel:
     def cola_publica(self):
         with self._lock:
             pendientes = [self._item_pub(x) for x in self._cola if x.get("estado") in (1, 4)]
-            recientes = [self._item_pub(x) for x in self._cola if x.get("estado") in (0, 2, 3)]
-            return {"pendientes": pendientes, "recientes": list(reversed(recientes[-10:]))}
+            recientes = [self._item_pub(x) for x in self._cola if x.get("estado") in (0, 2)]
+            return {"pendientes": pendientes, "recientes": list(reversed(recientes[-40:]))}
 
     def config_publica(self):
         with self._lock:
@@ -417,6 +453,8 @@ class Panel:
         tend = [None] * 6
         puntos = []
         tabla = []
+        horas_map = {}
+        horas_orden = []
         total = 0
         paso = 1
         dia = desde
@@ -443,6 +481,7 @@ class Panel:
                         celda, ultimo[i], tend[i] = paso_gas(ultimo[i], tend[i], crudo)
                         celdas.append(celda)
                         _sumar_stat(stats[i], celda, _obj_indice(objetivos, i))
+                    _sumar_hora(horas_map, horas_orden, rec.get("t"), celdas)
                     total += 1
                     if (total - 1) % paso == 0:
                         puntos.append({
@@ -467,6 +506,7 @@ class Panel:
             "puntos": puntos,
             "tabla": list(reversed(tabla[-200:])),
             "analisis": _analisis_pub(stats),
+            "por_hora": [_cerrar_hora(clave, horas_map[clave]) for clave in horas_orden],
         }
 
     def _consumir(self, est, texto, cuando):
@@ -556,6 +596,11 @@ class Panel:
             tend = celdas[i]["tendencia"]
             celda, _, _ = paso_gas(prev, tend, valor)
             celdas[i] = celda
+        hums = est["hum_celdas"]
+        for i in range(3):
+            valor = nums[6 + i] if 6 + i < len(nums) else None
+            celda, _, _ = paso_humedad(hums[i]["valor"], hums[i]["tendencia"], valor)
+            hums[i] = celda
         self._append_lectura({
             "t": cuando.isoformat(timespec="seconds"),
             "ip": est["ip"],
@@ -585,6 +630,7 @@ class Panel:
             if enviado and (cuando - enviado).total_seconds() > 25:
                 continue
             item["ack"] = texto
+            item["ack_en"] = cuando.isoformat(timespec="seconds")
             self._guardar_cola()
             return
 
@@ -622,7 +668,7 @@ class Panel:
 
     def _podar(self):
         hechos = [x for x in self._cola if x.get("estado") in (0, 2, 3)]
-        conservar = {id(x) for x in hechos[-40:]}
+        conservar = {id(x) for x in hechos[-80:]}
         conservar.update(id(x) for x in self._cola if x.get("estado") in (1, 4))
         self._cola = [x for x in self._cola if id(x) in conservar]
 
@@ -657,9 +703,16 @@ class Panel:
                 "control": ctrl,
             })
         humedad = []
+        hums = est.get("hum_celdas") or _humedad_vacia()
         for z in (1, 2, 3):
-            idx = 5 + z
-            humedad.append({"zona": z, "valor": _num(nums[idx]) if idx < len(nums) else None})
+            celda = hums[z - 1] if z - 1 < len(hums) else _celda_vacia()
+            humedad.append({
+                "zona": z,
+                "valor": celda.get("valor"),
+                "crudo": celda.get("crudo"),
+                "reinicio": bool(celda.get("reinicio")),
+                "tendencia": celda.get("tendencia"),
+            })
         compresores = []
         for n in (1, 2):
             idx = 12 + n
@@ -822,6 +875,10 @@ class Panel:
             "enviado": item.get("enviado"),
             "enviado_display": fmt_fecha(_parse_iso(item.get("enviado"))),
             "ack": item.get("ack"),
+            "ack_en": item.get("ack_en"),
+            "ack_en_display": fmt_fecha(_parse_iso(item.get("ack_en"))),
+            "recibido": _recibido(item, ahora()),
+            "ip_envio": item.get("ip_envio") or item.get("ip"),
             "error": item.get("error"),
             "intentos": item.get("intentos") or 0,
         }
@@ -959,6 +1016,8 @@ def _estado_mem(ip, data):
         est[campo] = _parse_iso(est.get(campo))
     if not isinstance(est.get("celdas"), list) or len(est["celdas"]) != 6:
         est["celdas"] = _celdas_vacias()
+    if not isinstance(est.get("hum_celdas"), list) or len(est["hum_celdas"]) != 3:
+        est["hum_celdas"] = _humedad_vacia()
     est["ripener_partes"] = list(est.get("ripener_partes") or [])
     est["reefer_partes"] = list(est.get("reefer_partes") or [])
     est["consignas"] = dict(est.get("consignas") or {})
@@ -1050,6 +1109,75 @@ def _stat_vacio():
         "min": None, "max": None, "suma_desv": 0.0,
         "en_1": 0, "en_2": 0, "fuera": 0,
     }
+
+
+def _hora_vacia():
+    celda = {"inicio": None, "fin": None, "min": None, "max": None, "n": 0}
+    return {"co2": [dict(celda) for _ in range(3)], "o2": [dict(celda) for _ in range(3)]}
+
+
+def _sumar_hora(horas_map, horas_orden, marca, celdas):
+    if not isinstance(marca, str) or len(marca) < 13:
+        return
+    clave = marca[:13]
+    bloque = horas_map.get(clave)
+    if bloque is None:
+        bloque = _hora_vacia()
+        horas_map[clave] = bloque
+        horas_orden.append(clave)
+    for i in range(3):
+        _tocar_hora(bloque["co2"][i], _num(celdas[i]["valor"]))
+        _tocar_hora(bloque["o2"][i], _num(celdas[i + 3]["valor"]))
+
+
+def _tocar_hora(celda, valor):
+    if valor is None:
+        return
+    if celda["n"] == 0:
+        celda["inicio"] = valor
+        celda["min"] = valor
+        celda["max"] = valor
+    else:
+        if valor < celda["min"]:
+            celda["min"] = valor
+        if valor > celda["max"]:
+            celda["max"] = valor
+    celda["fin"] = valor
+    celda["n"] += 1
+
+
+def _cerrar_hora(clave, bloque):
+    def pub(celda):
+        delta = None if celda["n"] == 0 else round(celda["fin"] - celda["inicio"], 4)
+        return {
+            "inicio": celda["inicio"],
+            "fin": celda["fin"],
+            "min": celda["min"],
+            "max": celda["max"],
+            "n": celda["n"],
+            "delta": delta,
+        }
+    return {
+        "hora": clave,
+        "etiqueta": clave[8:10] + "/" + clave[5:7] + " " + clave[11:13] + ":00",
+        "co2": {str(i + 1): pub(bloque["co2"][i]) for i in range(3)},
+        "o2": {str(i + 1): pub(bloque["o2"][i]) for i in range(3)},
+    }
+
+
+def _recibido(item, momento):
+    """True si llegó el OK del equipo, False si ya no va a llegar, None si sigue en espera."""
+    estado = item.get("estado")
+    if estado == 2:
+        return False
+    if estado != 0:
+        return None
+    if item.get("ack"):
+        return True
+    enviado = _parse_iso(item.get("enviado"))
+    if enviado and (momento - enviado).total_seconds() > 25:
+        return False
+    return None
 
 
 def _sumar_stat(stat, celda, objetivo):
@@ -1212,6 +1340,17 @@ def _test_reconstruccion(tmp):
     assert v["compresores"][1]["encendido"] is False
     assert [e["pos"] for e in v["estados"]] == [10]
     assert v["humedad"][0]["valor"] == 89.8
+    assert v["humedad"][2]["valor"] == 100.0
+    p.linea(ip, "STARCOOL_CONSULTA:6.2,5.1,8.3,4.1,0.0,12.0,0,0,100.0,1,0,1,0,0,0")
+    h = p.vista(ip)["humedad"]
+    assert h[0]["valor"] == 89.8 and h[0]["reinicio"] is True
+    assert h[1]["valor"] == 92.1 and h[1]["reinicio"] is True
+    assert h[2]["valor"] == 100.0 and h[2]["reinicio"] is False
+    p.linea(ip, "STARCOOL_CONSULTA:6.2,5.1,8.3,4.1,0.0,12.0,40,25.5,0,1,0,1,0,0,0")
+    h = p.vista(ip)["humedad"]
+    assert h[0]["valor"] == 89.8 and h[0]["reinicio"] is True
+    assert h[1]["valor"] == 92.1 and h[1]["reinicio"] is True
+    assert h[2]["valor"] == 100.0 and h[2]["reinicio"] is True
     assert v["datos_total"]["fecha"].endswith("-05:00")
     assert v["paso"] == "inyector"
 
@@ -1246,6 +1385,8 @@ def _test_cola(tmp):
     recientes = p.cola_publica()["recientes"]
     assert recientes[0]["estado"] == 0
     assert recientes[0]["ack"] == "STARCOOL_OK"
+    assert recientes[0]["recibido"] is True
+    assert recientes[0]["ack_en_display"]
     segundo = p.linea(ip, "STARCOOL:PLATAFORMA")
     assert segundo["trama"] == "STARCOOL:SLEEP"
     p.confirmar(segundo["id"], ok=False, error="socket")
@@ -1254,7 +1395,16 @@ def _test_cola(tmp):
     libre = p.encolar("INYECTOR:&O0", titulo="Electro")
     assert p.linea("10.9.9.9", "STARCOOL:PLATAFORMA")["trama"] == "INYECTOR:&O0"
     p.cancelar(p.encolar("STARCOOL:ZONA111", titulo="Zona 111", ip=ip)["id"])
-    assert all(x["trama"] != "STARCOOL:ZONA111" or x["estado"] == 3 for x in p.cola_publica()["recientes"])
+    assert all(x["trama"] != "STARCOOL:ZONA111" for x in p.cola_publica()["recientes"])
+    salio = p.linea(ip, "STARCOOL:PLATAFORMA")
+    assert salio["trama"] == "STARCOOL:SLEEP"
+    p.confirmar(salio["id"], ok=True)
+    for item in p._cola:
+        if item["id"] == salio["id"]:
+            item["enviado"] = (ahora() - datetime.timedelta(seconds=40)).isoformat(timespec="seconds")
+    silencio = [x for x in p.cola_publica()["recientes"] if x["id"] == salio["id"]][0]
+    assert silencio["recibido"] is False
+    assert silencio["ack"] is None
     assert libre["id"]
 
 
@@ -1282,6 +1432,17 @@ def _test_historico(tmp):
     assert o2["fuera"] == 2
     assert data["tabla"][0]["zonas"][0]["co2"]["reinicio"] is True
     assert data["tabla"][0]["zonas"][0]["co2"]["valor"] == 8.0
+    assert len(data["por_hora"]) == 1
+    hora = data["por_hora"][0]
+    assert hora["etiqueta"].endswith(":00")
+    z1 = hora["co2"]["1"]
+    assert z1["n"] == 3
+    assert z1["inicio"] == 6.0
+    assert z1["fin"] == 8.0
+    assert z1["delta"] == 2.0
+    assert hora["o2"]["2"]["n"] == 3
+    assert hora["o2"]["2"]["inicio"] == 10.0
+    assert hora["o2"]["2"]["fin"] == 10.5
 
 
 def _probar():

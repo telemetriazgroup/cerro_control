@@ -1,9 +1,12 @@
+import hmac
 import os
 import re
+import secrets
 import socket
 import threading
 import datetime
 import json
+from http.cookies import SimpleCookie
 from panel_cerro import Panel, PanelError, ahora
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +26,14 @@ API_HTTP_PORT = int(os.environ.get("CERRO_API_PORT", "9986"))
 API_TOKEN = os.environ.get("CERRO_API_TOKEN", "").strip()
 BASE_DIR = os.environ.get("CERRO_DIR", os.getcwd())
 RUTA_INTERFAZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "interfaz.html")
+RUTA_LOGIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "login.html")
+USUARIO_PANEL = os.environ.get("CERRO_USER", "").strip() or "zgroup"
+CLAVE_PANEL = os.environ.get("CERRO_PASS", "") or "Proyecto2026!"
+SESION_NOMBRE = "cerro_sesion"
+SESION_SEG = 12 * 3600
+_sesiones = {}
+_sesiones_lock = threading.Lock()
+_fallos_login = {}
 MAX_POR_IP = 30           # máx. conexiones simultáneas por IP (cierra las más viejas)
 IDLE_TIMEOUT = 120        # segundos sin datos → cerrar conexión y liberar slot
 BACKLOG = 256
@@ -761,10 +772,91 @@ def _leer_cuerpo(handler):
     return handler.rfile.read(largo).decode("utf-8", errors="replace")
 
 
+def _rellenar(texto):
+    return (texto or "").encode("utf-8")[:200].ljust(200, b"\0")
+
+
 def _autorizado(handler):
+    """Un script con X-Token sigue pudiendo llamar la API si CERRO_API_TOKEN está definido."""
     if not API_TOKEN:
-        return True
-    return handler.headers.get("X-Token", "") == API_TOKEN
+        return False
+    recibido = handler.headers.get("X-Token", "")
+    return hmac.compare_digest(_rellenar(recibido), _rellenar(API_TOKEN))
+
+
+def _cookie(handler, nombre):
+    crudo = handler.headers.get("Cookie", "")
+    if not crudo:
+        return ""
+    jar = SimpleCookie()
+    try:
+        jar.load(crudo)
+    except Exception:
+        return ""
+    morsel = jar.get(nombre)
+    return morsel.value if morsel else ""
+
+
+def _sesion_valida(handler):
+    token = _cookie(handler, SESION_NOMBRE)
+    if not token:
+        return False
+    momento = time.monotonic()
+    with _sesiones_lock:
+        expira = _sesiones.get(token)
+        if not expira or expira < momento:
+            _sesiones.pop(token, None)
+            return False
+    return True
+
+
+def _puede_ver(handler):
+    return _autorizado(handler) or _sesion_valida(handler)
+
+
+def _abrir_sesion():
+    token = secrets.token_urlsafe(32)
+    limite = time.monotonic()
+    with _sesiones_lock:
+        vencidas = [k for k, expira in _sesiones.items() if expira < limite]
+        for k in vencidas:
+            _sesiones.pop(k, None)
+        _sesiones[token] = limite + SESION_SEG
+    return token
+
+
+def _cerrar_sesion(handler):
+    token = _cookie(handler, SESION_NOMBRE)
+    if token:
+        with _sesiones_lock:
+            _sesiones.pop(token, None)
+
+
+def _cabecera_sesion(token):
+    return f"{SESION_NOMBRE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESION_SEG}"
+
+
+def _cabecera_cerrar():
+    return f"{SESION_NOMBRE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+
+
+def _credenciales_ok(usuario, clave):
+    usuario_ok = hmac.compare_digest(_rellenar(usuario), _rellenar(USUARIO_PANEL))
+    clave_ok = hmac.compare_digest(_rellenar(clave), _rellenar(CLAVE_PANEL))
+    return usuario_ok and clave_ok
+
+
+def _demasiados_intentos(ip):
+    momento = time.monotonic()
+    with _sesiones_lock:
+        lista = [t for t in _fallos_login.get(ip, []) if momento - t < 600]
+        _fallos_login[ip] = lista
+        return len(lista) >= 8
+
+
+def _anotar_fallo(ip):
+    with _sesiones_lock:
+        _fallos_login.setdefault(ip, []).append(time.monotonic())
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -796,20 +888,76 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _pagina(self, ruta, status=200):
+        try:
+            with open(ruta, encoding="utf-8") as fh:
+                body = fh.read().encode("utf-8")
+        except OSError as e:
+            self._json(500, {"ok": False, "detalle": f"sin pagina: {e}"})
+            return
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirigir(self, destino, cookie=None):
+        self.send_response(303)
+        self.send_header("Location", destino)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+
+    def _entrar(self):
+        ip = self.client_address[0]
+        if _demasiados_intentos(ip):
+            self._redirigir("/login?e=2")
+            return
+        try:
+            crudo = _leer_cuerpo(self)
+        except ErrorComando:
+            self._redirigir("/login?e=1")
+            return
+        datos = parse_qs(crudo, keep_blank_values=True)
+        usuario = (datos.get("usuario") or [""])[0]
+        clave = (datos.get("clave") or [""])[0]
+        if not _credenciales_ok(usuario, clave):
+            _anotar_fallo(ip)
+            self._redirigir("/login?e=1")
+            return
+        self._redirigir("/", _cabecera_sesion(_abrir_sesion()))
+
+    def _salir(self):
+        _cerrar_sesion(self)
+        self._redirigir("/login", _cabecera_cerrar())
+
     def _ruta(self):
         return urlparse(self.path).path.rstrip("/") or "/"
 
     def do_GET(self):
         ruta = self._ruta()
+        if ruta == "/salud":
+            self._json(200, {"ok": True})
+            return
+        if ruta == "/login":
+            if _puede_ver(self):
+                self._redirigir("/")
+                return
+            self._pagina(RUTA_LOGIN)
+            return
+        if not _puede_ver(self):
+            if ruta == "/":
+                self._redirigir("/login")
+                return
+            self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
+            return
         if ruta == "/":
             self._html()
             return
-        if not _autorizado(self):
-            self._json(401, {"ok": False, "detalle": "token invalido"})
-            return
-        if ruta == "/salud":
-            self._json(200, {"ok": True, "tcp": PORT, "dispositivos": _conexiones_activas()})
-        elif ruta == "/dispositivos":
+        if ruta == "/dispositivos":
             self._json(200, {"dispositivos": listar_dispositivos()})
         elif ruta == "/cerro":
             self._json(200, {"cerro": listar_cerro()})
@@ -863,10 +1011,16 @@ class ApiHandler(BaseHTTPRequestHandler):
         return data
 
     def do_POST(self):
-        if not _autorizado(self):
-            self._json(401, {"ok": False, "detalle": "token invalido"})
-            return
         ruta = self._ruta()
+        if ruta == "/login":
+            self._entrar()
+            return
+        if ruta == "/salir":
+            self._salir()
+            return
+        if not _puede_ver(self):
+            self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
+            return
         try:
             if ruta == "/comando":
                 data = self._cuerpo_json()
