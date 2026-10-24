@@ -4,6 +4,7 @@ import socket
 import threading
 import datetime
 import json
+from panel_cerro import Panel, PanelError, ahora
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -28,36 +29,13 @@ BACKLOG = 256
 REINTENTOS_ARCHIVO = 5
 REINTENTOS_API = 3
 REINICIO_SERVIDOR_SEG = 3
-MAX_CUERPO_HTTP = 8192
+MAX_CUERPO_HTTP = 65536
 DIR_REGISTROS = "registros"
+panel = Panel(BASE_DIR)
 
 API_URL = os.environ.get("CERRO_API_URL", "http://161.132.53.51:9050/TermoKing/")
 API_URL2 = os.environ.get("CERRO_API_URL2", "http://161.132.206.104:9050/Datos/")
 ARCHIVO_API_PENDIENTE = os.path.join(BASE_DIR, "cerro_api_pendiente.jsonl")
-
-# Comandos vistos en el registro y los anotados para el inyector.
-CATALOGO_COMANDOS = [
-    {"grupo": "Inyector", "trama": "INYECTOR:&O0", "etiqueta": "Electro 0 · zona 1 · ventilador"},
-    {"grupo": "Inyector", "trama": "INYECTOR:&O1", "etiqueta": "Salida &O1"},
-    {"grupo": "Inyector", "trama": "INYECTOR:&RELE3OFF", "etiqueta": "Relé 3 apagado · zona 2"},
-    {"grupo": "Inyector", "trama": "INYECTOR:ESTADO?", "etiqueta": "Pedir estado"},
-    {"grupo": "Starcool", "trama": "STARCOOL:ZONA111", "etiqueta": "Zona 111"},
-    {"grupo": "Starcool", "trama": "STARCOOL:ZONA222", "etiqueta": "Zona 222"},
-    {"grupo": "Starcool", "trama": "STARCOOL:ZONA333", "etiqueta": "Zona 333"},
-    {"grupo": "Starcool", "trama": "STARCOOL:SLEEP", "etiqueta": "Sleep"},
-    {"grupo": "Starcool", "trama": "STARCOOL:CMP222_ON", "etiqueta": "CMP222 on"},
-    {"grupo": "Starcool", "trama": "STARCOOL:CMP222_OFF", "etiqueta": "CMP222 off"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALCO200", "etiqueta": "VALCO200"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALCO211", "etiqueta": "VALCO211"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALCO222", "etiqueta": "VALCO222"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALCO233", "etiqueta": "VALCO233"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALNITRO00", "etiqueta": "VALNITRO00"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALNITRO22", "etiqueta": "VALNITRO22"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALNITRO33", "etiqueta": "VALNITRO33"},
-    {"grupo": "Válvulas", "trama": "INYECTOR:VALNITRO111", "etiqueta": "VALNITRO111"},
-    {"grupo": "Reefer", "trama": "REEFER:Trama_Write(0,3.5,100)", "etiqueta": "Trama write 0, 3.5, 100"},
-    {"grupo": "Reefer", "trama": "REEFER:Trama_Write(10,0,1)", "etiqueta": "Trama write 10, 0, 1"},
-]
 
 # Firma del controlador de cámara (tramas del ciclo RIPENER / STARCOOL / REEFER).
 MARCADORES_CERRO = (
@@ -104,7 +82,7 @@ class Sesion:
         self.puerto = puerto
         self.tipo = "desconocido"   # desconocido | cerro | json
         self.equipo = None
-        self.conectado_en = datetime.datetime.now()
+        self.conectado_en = ahora()
         self.identificado_en = None
         self.ultima = self.conectado_en
         self.ultima_muestra = ""
@@ -240,7 +218,7 @@ def guardar_en_archivo(mensaje, timestamp, ip=None):
 
 def _guardar_api_pendiente(mensaje_json):
     registro = {
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": ahora().isoformat(),
         "payload": mensaje_json,
     }
     with api_pendiente_lock:
@@ -288,7 +266,7 @@ def procesar_json(mensaje_json, sesion):
         _guardar_api_pendiente(mensaje_json)
 
     sesion.ultimo_envio = {
-        "cuando": datetime.datetime.now().isoformat(timespec="seconds"),
+        "cuando": ahora().isoformat(timespec="seconds"),
         "termoking": response is not None,
         "datos": response2 is not None,
         "termoking_url": API_URL,
@@ -423,7 +401,7 @@ def _registrar_cerro(sesion):
         sesion.tipo = "cerro"
         _cerro_por_ip[sesion.ip] = sesion
         if sesion.identificado_en is None:
-            sesion.identificado_en = datetime.datetime.now()
+            sesion.identificado_en = ahora()
     if primera_vez:
         print(
             f"🎯 Controlador cerro en {sesion.ip}:{sesion.puerto} "
@@ -437,7 +415,7 @@ def _conexiones_activas():
 
 
 def _tocar_sesion(sesion, chunk):
-    sesion.ultima = datetime.datetime.now()
+    sesion.ultima = ahora()
     sesion.tramas += 1
     muestra = " ".join(chunk.split())
     if muestra:
@@ -536,7 +514,7 @@ def _publicar_serial(ip, texto, flujo, tipo):
         _serial_seq += 1
         _serial_lineas.append({
             "n": _serial_seq,
-            "hora": datetime.datetime.now().strftime("%H:%M:%S"),
+            "hora": ahora().strftime("%H:%M:%S"),
             "ip": ip,
             "flujo": flujo,
             "tipo": tipo,
@@ -548,11 +526,33 @@ def _publicar_serial(ip, texto, flujo, tipo):
 def _volcar_serial(sesion, chunk, flujo="in"):
     for linea in chunk.splitlines():
         limpia = linea.strip()
-        if limpia:
-            _publicar_serial(sesion.ip, limpia, flujo, sesion.tipo)
+        if not limpia:
+            continue
+        _publicar_serial(sesion.ip, limpia, flujo, sesion.tipo)
+        if flujo != "in":
+            continue
+        try:
+            comando = panel.linea(sesion.ip, limpia)
+        except Exception as e:
+            print(f"❌ No se pudo interpretar {limpia!r}: {e}")
+            comando = None
+        if comando:
+            _despachar_ventana(sesion, comando)
 
 
-def snapshot_serial(desde=0, ip=None):
+def _despachar_ventana(sesion, comando):
+    """Suelta un comando encolado en la ventana que abre STARCOOL:PLATAFORMA."""
+    try:
+        enviar_trama(comando["trama"], sesion.ip)
+    except ErrorComando as e:
+        panel.confirmar(comando["id"], ok=False, error=e.detalle)
+        print(f"❌ Ventana {sesion.ip}: no salió {comando['trama']}: {e.detalle}")
+        return
+    panel.confirmar(comando["id"], ok=True)
+    print(f"🪟 Ventana {sesion.ip}: {comando['trama']}")
+
+
+def snapshot_serial(desde=0, ip=None, equipo=None):
     with _serial_lock:
         if desde <= 0:
             lineas = list(_serial_lineas)[-300:]
@@ -562,6 +562,7 @@ def snapshot_serial(desde=0, ip=None):
             lineas = [x for x in lineas if x["ip"] == ip]
         estado = json.loads(json.dumps(_estado_por_ip))
         siguiente = _serial_seq
+    momento = ahora()
     return {
         "siguiente": siguiente,
         "lineas": lineas,
@@ -569,6 +570,12 @@ def snapshot_serial(desde=0, ip=None):
         "dispositivos": listar_dispositivos(),
         "tcp": PORT,
         "enlaces": {"termoking": API_URL, "datos": API_URL2},
+        "hora": momento.strftime("%d/%m/%Y %H:%M:%S"),
+        "hoy": momento.date().isoformat(),
+        "zona_horaria": "America/Lima",
+        "panel": panel.vista(equipo or ip),
+        "cola": panel.cola_publica(),
+        "config": panel.config_publica(),
     }
 
 
@@ -615,7 +622,7 @@ def enviar_trama(trama, ip=None):
             {"ip": ip, "puerto": puerto},
         )
 
-    guardar_en_archivo(f">> {texto}", datetime.datetime.now(), ip)
+    guardar_en_archivo(f">> {texto}", ahora(), ip)
     _publicar_serial(ip, texto, "out", "cerro")
     print(f"➡️ Comando a {ip}:{puerto}: {texto}")
     return {
@@ -652,7 +659,7 @@ def handle_client(conn, addr):
                 break
 
             chunk = data.decode("utf-8", errors="replace")
-            timestamp = datetime.datetime.now()
+            timestamp = ahora()
             _tocar_sesion(sesion, chunk)
             guardar_en_archivo(chunk, timestamp, client_ip)
 
@@ -771,6 +778,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -806,7 +814,21 @@ class ApiHandler(BaseHTTPRequestHandler):
         elif ruta == "/cerro":
             self._json(200, {"cerro": listar_cerro()})
         elif ruta == "/comandos":
-            self._json(200, {"comandos": CATALOGO_COMANDOS})
+            self._json(200, {"comandos": panel.config_publica()["comandos"]})
+        elif ruta == "/config":
+            self._json(200, panel.config_publica())
+        elif ruta == "/lecturas":
+            consulta = parse_qs(urlparse(self.path).query)
+            hoy = ahora().date().isoformat()
+            desde = (consulta.get("desde") or [hoy])[0]
+            hasta = (consulta.get("hasta") or [hoy])[0]
+            ip = (consulta.get("ip") or [None])[0]
+            if ip:
+                ip = ip.strip() or None
+            try:
+                self._json(200, panel.lecturas(desde, hasta, ip))
+            except PanelError as e:
+                self._json(e.status, {"ok": False, "detalle": e.detalle})
         elif ruta == "/serial":
             consulta = parse_qs(urlparse(self.path).query)
             try:
@@ -814,38 +836,69 @@ class ApiHandler(BaseHTTPRequestHandler):
             except ValueError:
                 desde = 0
             ip = (consulta.get("ip") or [None])[0]
+            equipo = (consulta.get("equipo") or [None])[0]
             if ip:
                 ip = ip.strip() or None
-            self._json(200, snapshot_serial(desde, ip))
+            if equipo:
+                equipo = equipo.strip() or None
+            self._json(200, snapshot_serial(desde, ip, equipo))
         else:
             self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
+
+    def _cuerpo_json(self):
+        crudo = _leer_cuerpo(self)
+        consulta = parse_qs(urlparse(self.path).query)
+        ip = (consulta.get("ip") or [None])[0]
+        ctype = self.headers.get("Content-Type", "")
+        if "application/json" in ctype or crudo.lstrip().startswith("{"):
+            data = json.loads(crudo or "{}")
+            if not isinstance(data, dict):
+                raise ErrorComando(400, "el json debe ser un objeto")
+        else:
+            data = {"trama": crudo}
+        if ip and not data.get("ip"):
+            data["ip"] = ip
+        if data.get("ip") is not None:
+            data["ip"] = str(data["ip"]).strip() or None
+        return data
 
     def do_POST(self):
         if not _autorizado(self):
             self._json(401, {"ok": False, "detalle": "token invalido"})
             return
-        if self._ruta() != "/comando":
-            self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
-            return
+        ruta = self._ruta()
         try:
-            crudo = _leer_cuerpo(self)
-            consulta = parse_qs(urlparse(self.path).query)
-            ip = (consulta.get("ip") or [None])[0]
-            ctype = self.headers.get("Content-Type", "")
-            if "application/json" in ctype or crudo.lstrip().startswith("{"):
-                data = json.loads(crudo or "{}")
-                if not isinstance(data, dict):
-                    raise ErrorComando(400, "el json debe ser un objeto")
+            if ruta == "/comando":
+                data = self._cuerpo_json()
                 trama = data.get("trama", data.get("comando", ""))
-                ip = data.get("ip") or ip
+                resultado = panel.encolar(
+                    trama,
+                    titulo=data.get("titulo") or "",
+                    descripcion=data.get("descripcion") or "",
+                    grupo=data.get("grupo") or "",
+                    ip=data.get("ip"),
+                )
+                self._json(200, {
+                    "ok": True,
+                    "encolado": True,
+                    "detalle": "Se envía tras el próximo STARCOOL:PLATAFORMA",
+                    **resultado,
+                })
+            elif ruta == "/comandos":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.guardar_catalogo(data.get("comandos"))})
+            elif ruta == "/config":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, "config": panel.actualizar(data)})
+            elif ruta == "/cola/cancelar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, "comando": panel.cancelar(data.get("id"))})
             else:
-                trama = crudo
-            if ip is not None:
-                ip = str(ip).strip() or None
-            resultado = enviar_trama(trama, ip)
-            self._json(200, resultado)
+                self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:
             self._json(e.status, {"ok": False, "detalle": e.detalle, **e.extra})
+        except PanelError as e:
+            self._json(e.status, {"ok": False, "detalle": e.detalle})
         except json.JSONDecodeError:
             self._json(400, {"ok": False, "detalle": "json invalido"})
         except Exception as e:
@@ -857,8 +910,8 @@ def _servir_api():
         try:
             servidor = ThreadingHTTPServer((API_HTTP_HOST, API_HTTP_PORT), ApiHandler)
             print(
-                f"🧭 Serial en http://{API_HTTP_HOST}:{API_HTTP_PORT}/ "
-                f"· TCP de equipos en {PORT} · JSON → {API_URL} y {API_URL2}"
+                f"🧭 Panel en http://{API_HTTP_HOST}:{API_HTTP_PORT}/ "
+                f"· TCP de equipos en {PORT} · hora {ahora().strftime('%d/%m/%Y %H:%M:%S')} America/Lima"
             )
             servidor.serve_forever()
         except OSError as e:

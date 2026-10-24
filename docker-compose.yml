@@ -6,6 +6,7 @@ services:
       - "9985:9985"
       - "9986:9986"
     environment:
+      TZ: America/Lima
       CERRO_DIR: /app/datos
       CERRO_TCP_PORT: "9985"
       CERRO_API_PORT: "9986"

@@ -3,377 +3,1236 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Serial cerro</title>
+<title>Cerro Prieto</title>
 <style>
   :root {
     color-scheme: dark;
-    --fondo: #12160f;
-    --panel: #1c2418;
-    --linea: #2c3824;
-    --texto: #e7efd8;
-    --suave: #9aab86;
-    --ambar: #e6c15a;
-    --verde: #9dce6a;
-    --salida: #7ec8c3;
-    --alerta: #e07a5f;
-    --on: #d6f58a;
+    --bg: #0c1220;
+    --card: #141c2e;
+    --card-2: #1b2640;
+    --line: #2a3a58;
+    --text: #e7eefb;
+    --muted: #8ea0c4;
+    --green: #3dd68c;
+    --green-dim: #143528;
+    --amber: #f0b429;
+    --amber-dim: #3a2e12;
+    --red: #ff8b84;
+    --red-dim: #3a1d24;
+    --blue: #8eb7ff;
+    --ok: #3dd68c;
+    --warn: #f0b429;
+    --danger: #ff7b72;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     min-height: 100vh;
-    background: var(--fondo);
-    color: var(--texto);
-    font: 15px/1.45 "Segoe UI", sans-serif;
+    background: radial-gradient(1200px 500px at 10% -10%, #17304a 0%, transparent 50%), var(--bg);
+    color: var(--text);
+    font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
   }
   header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
     align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--linea);
+    padding: 16px 20px 8px;
   }
-  h1 { margin: 0; font-size: 1.25rem; font-weight: 650; }
-  header p { margin: 4px 0 0; color: var(--suave); font-size: 0.92rem; }
-  .pill {
-    border: 1px solid var(--linea);
-    background: var(--panel);
-    border-radius: 999px;
-    padding: 8px 14px;
-    color: var(--ambar);
-    white-space: nowrap;
-  }
-  .pill.ok { color: var(--verde); }
-  .layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.8fr);
-    gap: 16px;
-    padding: 16px;
-  }
-  .terminal, aside section, .aviso {
-    background: var(--panel);
-    border: 1px solid var(--linea);
-    border-radius: 12px;
-  }
-  .terminal { display: flex; flex-direction: column; min-height: 70vh; }
-  #log {
-    flex: 1;
-    margin: 0;
-    padding: 12px 14px;
-    overflow: auto;
-    max-height: 68vh;
-    font: 13px/1.55 ui-monospace, "Cascadia Mono", monospace;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .in { color: var(--verde); }
-  .out { color: var(--salida); }
-  .meta { color: var(--suave); }
-  form {
-    display: flex;
-    gap: 8px;
-    padding: 12px;
-    border-top: 1px solid var(--linea);
-  }
-  input, select, button {
-    font: inherit;
-    color: var(--texto);
-    background: #10150e;
-    border: 1px solid var(--linea);
-    border-radius: 8px;
-  }
-  input, select { padding: 10px 12px; }
-  #trama { flex: 1; }
-  button {
-    padding: 10px 14px;
-    background: #24301c;
-    cursor: pointer;
-  }
-  button:hover { border-color: var(--ambar); }
-  aside { display: flex; flex-direction: column; gap: 12px; }
-  aside section { padding: 14px; }
-  h2 { margin: 0 0 10px; font-size: 0.95rem; letter-spacing: 0.02em; }
-  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .dato { background: #10150e; border-radius: 8px; padding: 8px; }
-  .dato span { display: block; color: var(--suave); font-size: 0.75rem; }
-  .dato strong { font-variant-numeric: tabular-nums; }
-  .bits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-  .bits i {
-    width: 22px; height: 28px;
+  .marca { display: flex; gap: 12px; align-items: center; }
+  .marca > span {
+    width: 42px; height: 42px; border-radius: 12px;
     display: grid; place-items: center;
-    border-radius: 4px;
-    background: #10150e;
-    color: var(--suave);
-    font-style: normal;
-    font: 12px ui-monospace, monospace;
+    background: #12382c; color: var(--green); font-weight: 700;
   }
-  .bits i.on { background: #31451c; color: var(--on); }
-  .crudo { margin: 8px 0 0; color: var(--suave); font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
-  .grupos { display: flex; flex-direction: column; gap: 10px; }
-  .grupo p { margin: 0 0 6px; color: var(--ambar); font-size: 0.8rem; }
-  .grupo div { display: flex; flex-wrap: wrap; gap: 6px; }
-  .grupo button { font-size: 0.85rem; }
-  .enlace { color: var(--salida); word-break: break-all; font-size: 0.82rem; }
-  .equipo { padding: 8px 0; border-top: 1px solid var(--linea); }
+  h1 { margin: 0; font-size: 1.25rem; }
+  header p, .leyenda { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
+  .lado { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .pill, .tabs button, button, input, select {
+    font: inherit; color: var(--text);
+    background: #10182a; border: 1px solid var(--line); border-radius: 999px;
+  }
+  .pill { padding: 8px 14px; color: var(--amber); white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: #1f6b45; }
+  .pill.lento { color: var(--amber); }
+  .tabs { display: flex; gap: 8px; padding: 0 20px 12px; }
+  .tabs button { padding: 8px 16px; cursor: pointer; border-radius: 999px; }
+  .tabs button.activa { background: #1ea35a; border-color: transparent; color: #fff; }
+  .marco {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 16px;
+    padding: 0 16px 24px;
+    align-items: start;
+  }
+  body[data-tab="hist"] .marco { grid-template-columns: 1fr; }
+  body[data-tab="hist"] #col-cmd { display: none; }
+  main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  section.bloque, aside, .terminal, .aviso {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  section.bloque, aside { padding: 14px; }
+  h2 { margin: 0 0 10px; font-size: 0.95rem; }
+  h3 { margin: 0; font-size: 0.92rem; }
+  .pasos { display: flex; flex-wrap: wrap; gap: 6px; }
+  .paso {
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 8px; color: var(--muted); font-size: 12px;
+  }
+  .paso.ventana { border-color: #6a5a2a; }
+  .paso.ahora { background: var(--green-dim); color: #d9ffe9; border-color: #1f8f55; }
+  .paso.ventana.ahora { background: var(--amber-dim); color: #ffe7a3; border-color: var(--amber); }
+  .mono, .crudo, #datos, #rs p {
+    font: 12.5px/1.45 ui-monospace, "Cascadia Mono", monospace;
+    color: var(--muted); white-space: pre-wrap; word-break: break-word;
+  }
+  .zonas, .comps, .hums, .valvulas, .salidas-grid, .analisis {
+    display: grid; gap: 10px;
+  }
+  .zonas { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zona, .comp, .hum, .valv, .salida, .ana {
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  }
+  .zona header, .comp, .valv, .salida { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .zona header { margin-bottom: 8px; }
+  .gases { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .gas strong, .comp strong, .hum strong, .eti-valor, .salida strong, .valv strong {
+    display: block; font-size: 1.55rem; font-variant-numeric: tabular-nums; font-weight: 680;
+  }
+  .gas .etiq, .hum span, .salida span, .valv span, .ana span { color: var(--muted); font-size: 0.78rem; }
+  .gas .flecha { font-style: normal; margin-left: 4px; }
+  .gas small, .comp small { display: block; color: var(--muted); font-size: 0.78rem; }
+  .gas.ok strong, .ana.ok strong { color: var(--ok); }
+  .gas.warn strong, .ana.warn strong { color: var(--warn); }
+  .gas.danger strong, .ana.danger strong { color: var(--danger); }
+  .gas .nota { color: var(--amber); }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; font-size: 11px; color: var(--muted); }
+  .badge.activo { color: var(--green); border-color: #1f8f55; }
+  .comps, .hums { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .comps { grid-template-columns: 1fr 1fr; }
+  .comp.off, .valv.off { background: var(--red-dim); border-color: #6e3038; }
+  .comp.on, .valv.on { background: var(--green-dim); border-color: #1f6b45; }
+  .comp strong, .valv strong { font-size: 1.05rem; }
+  .bits { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+  .bits i {
+    width: 32px; min-height: 40px; border-radius: 6px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-style: normal; font-size: 11px;
+  }
+  .bits i.on { background: var(--green-dim); color: var(--green); }
+  .bits i.off { background: var(--red-dim); color: var(--red); }
+  .valvulas, .salidas-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grupo-val h3 { margin: 8px 0; color: var(--muted); font-size: 0.78rem; letter-spacing: .04em; text-transform: uppercase; }
+  #rs article { margin-top: 8px; }
+  #rs h3 { color: var(--green); font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  details summary { cursor: pointer; color: var(--text); }
+  .rejilla { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 0.78rem; }
+  input, select { border-radius: 8px; padding: 8px 10px; width: 100%; }
+  .acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button { padding: 8px 12px; border-radius: 8px; background: #24304a; cursor: pointer; }
+  button:hover { border-color: var(--amber); }
+  button.primario { background: #1b6b40; }
+  aside { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+  .botones { display: flex; flex-wrap: wrap; gap: 6px; }
+  .botones button { text-align: left; }
+  .grupo-cmd p { margin: 8px 0 6px; color: var(--amber); font-size: 0.78rem; }
+  .item-cola { padding: 8px 0; border-top: 1px solid var(--line); }
+  .item-cola b { display: block; }
+  .item-cola span { color: var(--muted); font-size: 0.82rem; }
+  .fila-cmd { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  .fila-cmd .c-trama, .fila-cmd .c-desc { grid-column: 1 / -1; }
+  .terminal { min-height: 70vh; display: flex; flex-direction: column; }
+  #log { margin: 0; padding: 12px 14px; overflow: auto; max-height: 72vh; font: 13px/1.55 ui-monospace, monospace; }
+  .in { color: var(--green); }
+  .out { color: #7ec8c3; }
+  .meta { color: var(--muted); }
+  .rango { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .rango label { min-width: 140px; }
+  .analisis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grafica { overflow: auto; }
+  .grafica svg { width: 100%; height: auto; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  .tabla { overflow: auto; }
+  .marca-r { color: var(--amber); }
   .aviso {
-    display: none;
-    margin: 0 16px 16px;
-    padding: 10px 14px;
-    color: var(--ambar);
+    position: fixed; left: 16px; right: 16px; bottom: 16px; display: none;
+    padding: 10px 14px; color: var(--amber); z-index: 20;
   }
-  .aviso.malo { color: var(--alerta); }
-  @media (max-width: 900px) {
-    .layout { grid-template-columns: 1fr; }
+  .aviso.malo { color: var(--red); }
+  .modal-fondo {
+    position: fixed; inset: 0; background: rgba(5, 8, 16, .62);
+    display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px;
+  }
+  .modal-fondo[hidden], [hidden] { display: none !important; }
+  .modal { width: min(480px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .vacio { color: var(--muted); }
+  @media (max-width: 980px) {
+    .marco, .zonas, .analisis, .valvulas, .salidas-grid { grid-template-columns: 1fr; }
+    aside { position: static; max-height: none; }
     header { align-items: flex-start; flex-direction: column; }
   }
 </style>
 </head>
-<body>
+<body data-tab="vivo">
 <header>
-  <div>
-    <h1>Serial del controlador</h1>
-    <p id="subtitulo">Puerto TCP 9985</p>
+  <div class="marca">
+    <span>CP</span>
+    <div>
+      <h1>Cerro Prieto</h1>
+      <p id="sub">Esperando el ciclo del controlador</p>
+    </div>
   </div>
-  <div style="display:flex; gap:8px; align-items:center;">
+  <div class="lado">
+    <div>
+      <p id="ultimo">Sin datos todavía</p>
+      <p id="reloj">America/Lima</p>
+    </div>
     <select id="ip" hidden></select>
+    <button type="button" id="refrescar">Actualizar</button>
     <div class="pill" id="conexion">Esperando equipo</div>
   </div>
 </header>
-<div class="layout">
-  <section class="terminal">
-    <pre id="log"></pre>
-    <form id="envio">
-      <input id="trama" autocomplete="off" placeholder="Trama libre, por ejemplo INYECTOR:&O0" spellcheck="false">
-      <button type="submit">Enviar</button>
+<nav class="tabs" role="tablist">
+  <button type="button" class="activa" data-tabbtn="vivo">En vivo</button>
+  <button type="button" data-tabbtn="hist">Histórico O₂ / CO₂</button>
+  <button type="button" data-tabbtn="serial">Serial</button>
+</nav>
+<div class="marco">
+  <main>
+    <div id="tab-vivo">
+      <section class="bloque">
+        <h2>Ciclo</h2>
+        <div class="pasos" id="pasos">
+          <span class="paso" data-paso="servidor">Servidor</span>
+          <span class="paso" data-paso="ripener">Ripener</span>
+          <span class="paso" data-paso="etileno">Etileno</span>
+          <span class="paso" data-paso="reefer">Reefer</span>
+          <span class="paso" data-paso="consulta">Consulta</span>
+          <span class="paso" data-paso="salidas">Salidas</span>
+          <span class="paso" data-paso="inyector">Inyector</span>
+          <span class="paso" data-paso="ripener_plataforma">Ripener plat.</span>
+          <span class="paso ventana" data-paso="ventana">Ventana de comando</span>
+        </div>
+        <p class="leyenda" id="paso-texto">El comando encolado sale justo después de STARCOOL:PLATAFORMA.</p>
+      </section>
+      <section class="bloque">
+        <h2>Sensores</h2>
+        <p class="mono" id="d02-raw">Esperando STARCOOL_CONSULTA</p>
+        <p class="leyenda" id="gases-en"></p>
+        <p class="leyenda" id="obj-leyenda"></p>
+        <p class="leyenda">Si CO₂ u O₂ llegan en 0 o 25.5, se muestra el último valor válido y se conserva la flecha. La humedad sí muestra 0. Estado 11, 12 y 13: control de la zona, 1 = activo.</p>
+        <p class="vacio" id="vacio">Esperando el ciclo del controlador.</p>
+      </section>
+      <section class="bloque">
+        <details id="det-obj">
+          <summary id="obj-resumen">Objetivos CO₂ / O₂</summary>
+          <p class="leyenda" id="obj-origen"></p>
+          <p class="leyenda" id="obj-equipo"></p>
+          <form id="form-obj">
+            <div class="rejilla">
+              <label>CO₂ zona 1<input id="obj-co2-1" inputmode="decimal" step="0.1" min="0" max="100"></label>
+              <label>CO₂ zona 2<input id="obj-co2-2" inputmode="decimal" step="0.1" min="0" max="100"></label>
+              <label>CO₂ zona 3<input id="obj-co2-3" inputmode="decimal" step="0.1" min="0" max="100"></label>
+              <label>O₂ zona 1<input id="obj-o2-1" inputmode="decimal" step="0.1" min="0" max="100"></label>
+              <label>O₂ zona 2<input id="obj-o2-2" inputmode="decimal" step="0.1" min="0" max="100"></label>
+              <label>O₂ zona 3<input id="obj-o2-3" inputmode="decimal" step="0.1" min="0" max="100"></label>
+            </div>
+            <div class="acciones">
+              <button class="primario" type="submit">Guardar objetivos</button>
+              <button type="button" id="seguir-equipo">Usar consigna del equipo</button>
+            </div>
+          </form>
+        </details>
+      </section>
+      <div class="zonas" id="zonas">
+        <article class="zona" id="zona-1"><header><h3>Zona 1</h3><span class="badge" id="ctrl-1">—</span></header><div class="gases"><div class="gas none" id="gas-co2-1"><span class="etiq">CO₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div><div class="gas none" id="gas-o2-1"><span class="etiq">O₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div></div></article>
+        <article class="zona" id="zona-2"><header><h3>Zona 2</h3><span class="badge" id="ctrl-2">—</span></header><div class="gases"><div class="gas none" id="gas-co2-2"><span class="etiq">CO₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div><div class="gas none" id="gas-o2-2"><span class="etiq">O₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div></div></article>
+        <article class="zona" id="zona-3"><header><h3>Zona 3</h3><span class="badge" id="ctrl-3">—</span></header><div class="gases"><div class="gas none" id="gas-co2-3"><span class="etiq">CO₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div><div class="gas none" id="gas-o2-3"><span class="etiq">O₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div></div></article>
+      </div>
+      <section class="bloque">
+        <h2>Compresores</h2>
+        <div class="comps">
+          <article class="comp off" id="comp-1"><div><span class="etiq">Compresor 1</span><strong>Apagado</strong><small>Estado 14: —</small></div></article>
+          <article class="comp off" id="comp-2"><div><span class="etiq">Compresor 2</span><strong>Apagado</strong><small>Estado 15: —</small></div></article>
+        </div>
+      </section>
+      <section class="bloque">
+        <h2>Humedad</h2>
+        <div class="hums">
+          <div class="hum" id="hum-1"><span>Zona 1 humedad</span><strong>—</strong></div>
+          <div class="hum" id="hum-2"><span>Zona 2 humedad</span><strong>—</strong></div>
+          <div class="hum" id="hum-3"><span>Zona 3 humedad</span><strong>—</strong></div>
+        </div>
+      </section>
+      <section class="bloque">
+        <h2>Estados adicionales</h2>
+        <div id="estados" class="botones"></div>
+      </section>
+      <section class="bloque">
+        <h2>Canal rs</h2>
+        <div id="rs"><p>Aún no llega RIPENER ni REEFER_QUEST.</p></div>
+      </section>
+      <section class="bloque">
+        <h2>Inyectores</h2>
+        <p class="leyenda">0 = encendido, 1 = apagado. El número después de la coma no se interpreta.</p>
+        <p class="mono" id="bitmap-raw"></p>
+        <div class="bits" id="bits"></div>
+        <div id="valvulas"></div>
+      </section>
+      <section class="bloque">
+        <h2>STARCOOL_SALIDAS</h2>
+        <p class="mono" id="salidas-raw"></p>
+        <div class="salidas-grid" id="salidas-vista"></div>
+        <details>
+          <summary>Editar qué significa cada campo</summary>
+          <div id="salidas-editor"></div>
+          <div class="acciones"><button type="button" id="guardar-salidas" class="primario">Guardar significados</button></div>
+        </details>
+      </section>
+      <section class="bloque">
+        <h2 id="eti-titulo">Etileno</h2>
+        <p class="eti-valor" id="eti-valor">—</p>
+        <p class="leyenda" id="eti-nota"></p>
+        <p class="mono" id="eti-crudo"></p>
+        <details>
+          <summary>Editar nombre, unidad y nota</summary>
+          <div class="rejilla">
+            <label>Nombre<input id="eti-nombre"></label>
+            <label>Unidad<input id="eti-unidad" placeholder="ppm"></label>
+            <label>Nota<input id="eti-nota-edit"></label>
+          </div>
+          <div class="acciones"><button type="button" id="guardar-etileno" class="primario">Guardar etileno</button></div>
+        </details>
+      </section>
+      <section class="bloque">
+        <details>
+          <summary>Datos total</summary>
+          <pre id="datos" class="mono"></pre>
+        </details>
+      </section>
+    </div>
+    <div id="tab-hist" hidden>
+      <section class="bloque">
+        <h2>Histórico O₂ / CO₂</h2>
+        <p class="leyenda">Cada STARCOOL_CONSULTA queda guardada aquí. El promedio ignora los reinicios 0 y 25.5. La desviación se calcula contra los objetivos de ahora.</p>
+        <form id="form-hist" class="rango">
+          <label>Desde<input type="date" id="desde"></label>
+          <label>Hasta<input type="date" id="hasta"></label>
+          <button class="primario" type="submit">Analizar</button>
+        </form>
+        <p class="leyenda" id="hist-aviso"></p>
+      </section>
+      <div class="analisis" id="analisis"></div>
+      <section class="bloque">
+        <h2>CO₂ por zona</h2>
+        <div class="rango" id="zonas-graf">
+          <label><input type="checkbox" data-zona="1" checked> Zona 1</label>
+          <label><input type="checkbox" data-zona="2" checked> Zona 2</label>
+          <label><input type="checkbox" data-zona="3" checked> Zona 3</label>
+        </div>
+        <div class="grafica" id="graf-co2"></div>
+        <p class="leyenda" id="lectura-co2"></p>
+      </section>
+      <section class="bloque">
+        <h2>O₂ por zona</h2>
+        <div class="grafica" id="graf-o2"></div>
+        <p class="leyenda" id="lectura-o2"></p>
+      </section>
+      <section class="bloque">
+        <h2>Últimas lecturas</h2>
+        <div class="tabla" id="tabla"></div>
+      </section>
+    </div>
+    <div id="tab-serial" hidden>
+      <section class="terminal">
+        <pre id="log"></pre>
+      </section>
+      <p class="leyenda" id="json-nota"></p>
+    </div>
+  </main>
+  <aside id="col-cmd">
+    <div>
+      <h2 id="cmd-titulo">Comandos</h2>
+      <p class="leyenda">Se encolan y salen de a uno, después de STARCOOL:PLATAFORMA, en la ventana de 2 a 3 segundos.</p>
+      <div id="botones"></div>
+    </div>
+    <div>
+      <h2 id="cola-titulo">Cola</h2>
+      <div id="cola"></div>
+    </div>
+    <form id="libre">
+      <label>Trama libre<input id="trama-libre" autocomplete="off" placeholder="INYECTOR:&O0" spellcheck="false"></label>
+      <div class="acciones"><button type="submit">Encolar trama</button></div>
     </form>
-  </section>
-  <aside>
-    <section>
-      <h2>Última lectura</h2>
-      <div class="grid" id="consignas"></div>
-      <p class="crudo" id="etileno"></p>
-      <div class="bits" id="bits"></div>
-      <p class="crudo" id="inyector"></p>
-      <p class="crudo" id="starcool"></p>
-      <p class="crudo" id="bloques"></p>
-      <p class="crudo" id="ack"></p>
-    </section>
-    <section>
-      <h2>Comandos</h2>
-      <div class="grupos" id="comandos"></div>
-    </section>
-    <section>
-      <h2>JSON hacia sus enlaces</h2>
-      <p class="enlace" id="enlaces"></p>
-      <div id="jsons"></div>
-    </section>
+    <details>
+      <summary>Editar catálogo</summary>
+      <p class="leyenda">Título del botón, grupo, comando que sale por el serial y una descripción.</p>
+      <div id="editor"></div>
+      <div class="acciones">
+        <button type="button" id="agregar-cmd">Agregar comando</button>
+        <button type="button" id="guardar-cmd" class="primario">Guardar catálogo</button>
+      </div>
+    </details>
   </aside>
 </div>
 <div class="aviso" id="aviso"></div>
+<div class="modal-fondo" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+    <h2 id="modal-titulo"></h2>
+    <p id="modal-desc" class="leyenda"></p>
+    <p class="mono" id="modal-trama"></p>
+    <p class="leyenda">d02 actual</p>
+    <p class="mono" id="modal-d02"></p>
+    <p class="leyenda">Se envía por el serial después del próximo STARCOOL:PLATAFORMA.</p>
+    <div class="acciones">
+      <button type="button" class="primario" id="modal-ok">Encolar</button>
+      <button type="button" id="modal-no">Cerrar</button>
+    </div>
+  </div>
+</div>
 <script>
 const log = document.getElementById("log");
 const aviso = document.getElementById("aviso");
+const PASO_TEXTO = {
+  servidor: "Consignas del equipo",
+  ripener: "RIPENER",
+  etileno: "Etileno",
+  reefer: "REEFER_QUEST",
+  consulta: "STARCOOL_CONSULTA",
+  salidas: "STARCOOL_SALIDAS",
+  inyector: "INYECTOR",
+  ripener_plataforma: "RIPENER:PLATAFORMA",
+  ventana: "Ventana de comando"
+};
+const COLORES = ["#5eead4", "#fbbf24", "#93c5fd"];
 let desde = 0;
-let ipActiva = "";
 let pegado = true;
+let equipoElegido = "";
+let ultimoPanel = null;
+let ultimaHist = null;
+let fechasListas = false;
+let objSucio = false;
+let salSucio = false;
+let etiSucio = false;
+let editorSucio = false;
+let guardando = false;
+let firmaObj = "";
+let firmaSal = "";
+let firmaEti = "";
+let firmaEditor = "";
+let firmaBotones = "";
+let modalItem = null;
+let falloRed = false;
 
 log.addEventListener("scroll", () => {
   pegado = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 });
 
+let avisoTimer = 0;
 function mostrarAviso(texto, malo) {
+  aviso.hidden = false;
   aviso.style.display = "block";
   aviso.textContent = texto;
   aviso.className = malo ? "aviso malo" : "aviso";
+  clearTimeout(avisoTimer);
+  avisoTimer = setTimeout(() => {
+    aviso.hidden = true;
+    aviso.style.display = "";
+  }, 4000);
+}
+function fmt(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  const n = Number(v);
+  if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n));
+  return (Math.round(n * 10) / 10).toFixed(1);
+}
+function numInput(v) {
+  if (v == null || Number.isNaN(Number(v))) return "";
+  const n = Number(v);
+  return Math.abs(n - Math.round(n)) < 1e-6 ? String(Math.round(n)) : String(Math.round(n * 100) / 100);
+}
+function flecha(t) { return t === "sube" ? "↑" : t === "baja" ? "↓" : ""; }
+function hace(s) {
+  if (s == null) return "";
+  if (s < 2) return "ahora";
+  if (s < 60) return "hace " + Math.round(s) + " s";
+  return "hace " + Math.floor(s / 60) + " min";
+}
+function setTexto(id, texto) {
+  const el = document.getElementById(id);
+  if (el && el.textContent !== texto) el.textContent = texto;
+}
+function ocupado(id) {
+  const el = document.getElementById(id);
+  return el && el.contains(document.activeElement);
 }
 
-function ipSeleccionada() {
-  return document.getElementById("ip").value || ipActiva || "";
-}
-
-async function enviar(trama) {
-  const cuerpo = { trama };
-  const ip = ipSeleccionada();
-  if (ip) cuerpo.ip = ip;
-  const respuesta = await fetch("/comando", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cuerpo),
-  });
-  const data = await respuesta.json();
-  if (!respuesta.ok) {
-    mostrarAviso(data.detalle || "No se pudo enviar", true);
+function pintarGas(id, gas) {
+  const root = document.getElementById(id);
+  if (!gas) {
+    root.className = "gas none";
+    root.querySelector("strong").textContent = "—";
+    root.querySelector(".obj").textContent = "";
+    root.querySelector(".delta").textContent = "";
+    root.querySelector(".nota").textContent = "";
     return;
   }
-  mostrarAviso("Enviado a " + data.ip + " por el TCP " + data.puerto, false);
+  root.className = "gas " + (gas.estado || "none");
+  const marca = gas.valor == null ? "" : flecha(gas.tendencia);
+  root.querySelector("strong").textContent = (gas.valor == null ? "—" : fmt(gas.valor) + " %") + (marca ? " " + marca : "");
+  root.querySelector(".obj").textContent = gas.objetivo == null ? "" : "Obj " + fmt(gas.objetivo) + " %";
+  root.querySelector(".delta").textContent = gas.desviacion == null ? "" : "Δ " + fmt(gas.desviacion);
+  root.querySelector(".nota").textContent = gas.reinicio ? "Último válido · reinicio" : "";
+}
+
+function pintarVivo(panel) {
+  ultimoPanel = panel;
+  setTexto("sub", panel.ip ? "Controlador " + panel.ip : "Esperando el ciclo del controlador");
+  setTexto("ultimo", panel.ultimo_dato ? "Último dato: " + panel.ultimo_dato + " · " + hace(panel.segundos) : "Sin datos todavía");
+  setTexto("d02-raw", panel.d02_raw || "Esperando STARCOOL_CONSULTA");
+  setTexto("gases-en", panel.gases_en ? "Lectura de gases: " + panel.gases_en : "");
+  const obj = panel.objetivos;
+  if (obj) {
+    setTexto("obj-resumen", "Objetivos CO₂ " + [1,2,3].map(z => fmt(obj.co2[z])).join(" / ") + " · O₂ " + [1,2,3].map(z => fmt(obj.o2[z])).join(" / "));
+    setTexto("obj-leyenda", "Objetivos — CO₂ " + [1,2,3].map(z => fmt(obj.co2[z]) + " %").join(", ") + " · O₂ " + [1,2,3].map(z => fmt(obj.o2[z]) + " %").join(", "));
+  }
+  const origen = panel.objetivos_origen === "panel"
+    ? "Los colores y la desviación usan los objetivos guardados en este panel."
+    : panel.objetivos_origen === "equipo"
+      ? "Los colores siguen la consigna que manda el equipo en SERVIDOR. Guardar los fija en el panel."
+      : "Todavía no hay consigna del equipo. Se usan los objetivos de fábrica: CO₂ 8 / 10 / 12 y O₂ 4 / 4 / 8.";
+  setTexto("obj-origen", origen);
+  const cons = panel.consignas_equipo;
+  setTexto("obj-equipo", cons && cons.co2 ? "El equipo reporta CO₂ " + [1,2,3].map(z => fmt(cons.co2[z])).join(" / ") + " · O₂ " + [1,2,3].map(z => fmt(cons.o2[z])).join(" / ") + (cons.humedad ? " · humedad " + [1,2,3].map(z => fmt(cons.humedad[z])).join(" / ") : "") : "Aún no llega la línea SERVIDOR.");
+  document.getElementById("vacio").hidden = !panel.sin_datos;
+  document.querySelectorAll(".paso").forEach(el => el.classList.toggle("ahora", el.dataset.paso === panel.paso));
+  setTexto("paso-texto", (PASO_TEXTO[panel.paso] || "Esperando ciclo") + (panel.segundos != null ? " · " + hace(panel.segundos) : "") + " · " + (panel.ultimo_texto || ""));
+  (panel.por_zona || []).forEach(z => {
+    pintarGas("gas-co2-" + z.zona, z.co2);
+    pintarGas("gas-o2-" + z.zona, z.o2);
+    const badge = document.getElementById("ctrl-" + z.zona);
+    badge.textContent = z.control.etiqueta;
+    badge.className = "badge " + (z.control.activo ? "activo" : "inactivo");
+  });
+  (panel.compresores || []).forEach(c => {
+    const card = document.getElementById("comp-" + c.numero);
+    card.className = "comp " + (c.encendido ? "on" : "off");
+    card.querySelector("strong").textContent = c.etiqueta;
+    card.querySelector("small").textContent = "Estado " + (13 + c.numero) + ": " + (c.valor == null ? "—" : c.valor);
+  });
+  (panel.humedad || []).forEach(h => {
+    document.querySelector("#hum-" + h.zona + " strong").textContent = h.valor == null ? "—" : fmt(h.valor) + " %";
+  });
+  pintarLista("estados", JSON.stringify(panel.estados || []), (caja) => {
+    if (!(panel.estados || []).length) caja.textContent = "Sin estados adicionales.";
+    (panel.estados || []).forEach(e => {
+      const chip = document.createElement("span");
+      chip.className = "paso ahora";
+      chip.textContent = e.label + ": " + fmt(e.valor);
+      caja.appendChild(chip);
+    });
+  });
+  pintarLista("rs", JSON.stringify(panel.rs || []), (caja) => {
+    if (!(panel.rs || []).length) {
+      const p = document.createElement("p");
+      p.textContent = "Aún no llega RIPENER ni REEFER_QUEST.";
+      caja.appendChild(p);
+      return;
+    }
+    panel.rs.forEach(b => {
+      const art = document.createElement("article");
+      const h = document.createElement("h3");
+      h.textContent = b.nombre;
+      const p = document.createElement("p");
+      p.textContent = b.datos;
+      art.append(h, p);
+      caja.appendChild(art);
+    });
+  });
+  const iny = panel.inyector || {bits: [], valvulas: [], bitmap: ""};
+  setTexto("bitmap-raw", iny.bitmap ? iny.bitmap + (iny.flag ? "," + iny.flag : "") : "");
+  pintarLista("bits", iny.bitmap || "", (caja) => {
+    (iny.bits || []).forEach(bit => {
+      const celda = document.createElement("i");
+      celda.className = bit.encendido ? "on" : "off";
+      celda.title = (bit.label || bit.letra) + " · " + (bit.encendido ? "encendido" : "apagado");
+      const letra = document.createElement("b");
+      letra.textContent = bit.letra;
+      const valor = document.createElement("span");
+      valor.textContent = bit.bit;
+      celda.append(letra, valor);
+      caja.appendChild(celda);
+    });
+  });
+  pintarLista("valvulas", JSON.stringify(iny.valvulas || []), (caja) => {
+    ["CO₂", "Nitrógeno", "Bypass"].forEach(grupo => {
+      const items = (iny.valvulas || []).filter(v => v.grupo === grupo);
+      if (!items.length) return;
+      const bloque = document.createElement("div");
+      bloque.className = "grupo-val";
+      const h = document.createElement("h3");
+      h.textContent = grupo;
+      const grid = document.createElement("div");
+      grid.className = "valvulas";
+      items.forEach(v => {
+        const card = document.createElement("article");
+        card.className = "valv " + (v.encendido ? "on" : "off");
+        const nombre = document.createElement("span");
+        nombre.textContent = v.label;
+        const estado = document.createElement("strong");
+        estado.textContent = v.encendido ? "Encendido" : "Apagado";
+        card.append(nombre, estado);
+        grid.appendChild(card);
+      });
+      bloque.append(h, grid);
+      caja.appendChild(bloque);
+    });
+  });
+  const sal = panel.salidas || {raw: "", campos: []};
+  setTexto("salidas-raw", sal.raw || "Esperando STARCOOL_SALIDAS");
+  pintarLista("salidas-vista", JSON.stringify(sal.campos || []), (caja) => {
+    (sal.campos || []).forEach(c => {
+      const card = document.createElement("article");
+      card.className = "salida";
+      const nombre = document.createElement("span");
+      nombre.textContent = c.nombre;
+      const fuerte = document.createElement("strong");
+      fuerte.textContent = c.significado || (c.valor === "" ? "—" : c.valor);
+      card.append(nombre, fuerte);
+      if (c.significado) {
+        const crudo = document.createElement("small");
+        crudo.textContent = "Valor " + c.valor;
+        card.appendChild(crudo);
+      }
+      caja.appendChild(card);
+    });
+  });
+  const eti = panel.etileno || {};
+  setTexto("eti-titulo", eti.nombre || "Etileno");
+  setTexto("eti-valor", eti.valor == null || eti.valor === "" ? "—" : eti.valor + (eti.unidad ? " " + eti.unidad : ""));
+  setTexto("eti-nota", eti.nota || "");
+  setTexto("eti-crudo", eti.valor != null && eti.valor !== "" ? "RIPENER_ETILENO:" + eti.valor : "Esperando RIPENER_ETILENO");
+  setTexto("datos", JSON.stringify(panel.datos_total || {}, null, 2));
+  if (!objSucio && !guardando && !ocupado("form-obj")) llenarObjetivos(obj);
+}
+
+function pintarLista(id, firma, construir) {
+  const caja = document.getElementById(id);
+  if (caja.dataset.firma === firma) return;
+  caja.dataset.firma = firma;
+  caja.replaceChildren();
+  construir(caja);
+}
+
+function llenarObjetivos(obj) {
+  if (!obj) return;
+  const f = JSON.stringify(obj);
+  if (f === firmaObj) return;
+  firmaObj = f;
+  ["co2", "o2"].forEach(gas => ["1", "2", "3"].forEach(z => {
+    document.getElementById("obj-" + gas + "-" + z).value = numInput(obj[gas][z]);
+  }));
+}
+function leerObjetivos() {
+  const obj = {co2: {}, o2: {}};
+  ["co2", "o2"].forEach(gas => ["1", "2", "3"].forEach(z => {
+    obj[gas][z] = document.getElementById("obj-" + gas + "-" + z).value;
+  }));
+  return obj;
+}
+
+function pintarSalidasEditor(salidas) {
+  const raiz = document.getElementById("salidas-editor");
+  if (salSucio || guardando || ocupado("salidas-editor")) return;
+  const f = JSON.stringify(salidas || []);
+  if (f === firmaSal && raiz.childElementCount) return;
+  firmaSal = f;
+  raiz.replaceChildren();
+  (salidas || []).forEach((campo, i) => {
+    const fila = document.createElement("div");
+    fila.className = "rejilla";
+    fila.append(campoInput("Nombre", "nombre", campo.nombre), campoInput("Si vale 1", "cuando_1", campo.cuando_1), campoInput("Si vale 0", "cuando_0", campo.cuando_0));
+    raiz.appendChild(fila);
+  });
+}
+function campoInput(etiqueta, clave, valor) {
+  const lab = document.createElement("label");
+  lab.textContent = etiqueta;
+  const input = document.createElement("input");
+  input.dataset.clave = clave;
+  input.value = valor || "";
+  lab.appendChild(input);
+  return lab;
+}
+function leerSalidas() {
+  return [...document.querySelectorAll("#salidas-editor .rejilla")].map((fila, i) => {
+    const item = {nombre: "Campo " + (i + 1), cuando_1: "", cuando_0: ""};
+    fila.querySelectorAll("input").forEach(input => { item[input.dataset.clave] = input.value; });
+    return item;
+  });
+}
+function llenarEtileno(eti) {
+  if (etiSucio || guardando || ocupado("eti-nombre") || document.activeElement && document.activeElement.id && document.activeElement.id.startsWith("eti-")) return;
+  const f = JSON.stringify(eti || {});
+  if (f === firmaEti) return;
+  firmaEti = f;
+  document.getElementById("eti-nombre").value = eti.nombre || "";
+  document.getElementById("eti-unidad").value = eti.unidad || "";
+  document.getElementById("eti-nota-edit").value = eti.nota || "";
+}
+
+function pintarBotones(comandos) {
+  const f = JSON.stringify(comandos || []);
+  if (f === firmaBotones) return;
+  firmaBotones = f;
+  const caja = document.getElementById("botones");
+  caja.replaceChildren();
+  const grupos = [];
+  const mapa = new Map();
+  (comandos || []).forEach(item => {
+    const nombre = item.grupo || "General";
+    if (!mapa.has(nombre)) { mapa.set(nombre, []); grupos.push(nombre); }
+    mapa.get(nombre).push(item);
+  });
+  grupos.forEach(nombre => {
+    const bloque = document.createElement("div");
+    bloque.className = "grupo-cmd";
+    const titulo = document.createElement("p");
+    titulo.textContent = nombre;
+    const botones = document.createElement("div");
+    botones.className = "botones";
+    mapa.get(nombre).forEach(item => {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.textContent = item.titulo;
+      boton.title = item.trama + (item.descripcion ? " — " + item.descripcion : "");
+      boton.addEventListener("click", () => abrirModal(item));
+      botones.appendChild(boton);
+    });
+    bloque.append(titulo, botones);
+    caja.appendChild(bloque);
+  });
+}
+function pintarEditor(comandos) {
+  const raiz = document.getElementById("editor");
+  if (editorSucio || guardando || ocupado("editor")) return;
+  const f = JSON.stringify(comandos || []);
+  if (f === firmaEditor && raiz.childElementCount) return;
+  firmaEditor = f;
+  raiz.replaceChildren();
+  (comandos || []).forEach(item => raiz.appendChild(filaComando(item)));
+}
+function filaComando(item) {
+  const fila = document.createElement("div");
+  fila.className = "fila-cmd";
+  if (item && item.id) fila.dataset.id = item.id;
+  [["c-titulo", "Título", item && item.titulo], ["c-grupo", "Grupo", item && item.grupo], ["c-trama", "Comando", item && item.trama], ["c-desc", "Descripción", item && item.descripcion]].forEach(([cls, ph, val]) => {
+    const input = document.createElement("input");
+    input.className = cls;
+    input.placeholder = ph;
+    input.value = val || "";
+    fila.appendChild(input);
+  });
+  const borrar = document.createElement("button");
+  borrar.type = "button";
+  borrar.className = "c-borrar";
+  borrar.textContent = "Quitar";
+  fila.appendChild(borrar);
+  return fila;
+}
+function leerCatalogo() {
+  return [...document.querySelectorAll("#editor .fila-cmd")].map(fila => ({
+    id: fila.dataset.id || "",
+    titulo: fila.querySelector(".c-titulo").value,
+    grupo: fila.querySelector(".c-grupo").value,
+    trama: fila.querySelector(".c-trama").value,
+    descripcion: fila.querySelector(".c-desc").value
+  }));
+}
+
+function pintarCola(cola) {
+  const pendientes = (cola && cola.pendientes) || [];
+  const recientes = (cola && cola.recientes) || [];
+  setTexto("cola-titulo", "Cola" + (pendientes.length ? " · " + pendientes.length : ""));
+  setTexto("cmd-titulo", "Comandos" + (pendientes.length ? " · " + pendientes.length + " en cola" : ""));
+  const caja = document.getElementById("cola");
+  const firma = JSON.stringify(cola || {});
+  if (caja.dataset.firma === firma) return;
+  caja.dataset.firma = firma;
+  caja.replaceChildren();
+  if (!pendientes.length && !recientes.length) {
+    const p = document.createElement("p");
+    p.className = "leyenda";
+    p.textContent = "No hay comandos en espera.";
+    caja.appendChild(p);
+    return;
+  }
+  pendientes.forEach(item => caja.appendChild(filaCola(item, true)));
+  recientes.forEach(item => caja.appendChild(filaCola(item, false)));
+}
+function filaCola(item, pendiente) {
+  const fila = document.createElement("div");
+  fila.className = "item-cola";
+  const b = document.createElement("b");
+  b.textContent = item.titulo || item.trama;
+  const s = document.createElement("span");
+  const estado = {0: "Enviado", 1: "Pendiente", 2: "Error", 3: "Cancelado", 4: "Enviando"}[item.estado] || "";
+  s.textContent = item.trama + " · " + estado + (item.enviado_display ? " · " + item.enviado_display : "") + (item.ack ? " · " + item.ack : "") + (item.error ? " · " + item.error : "");
+  fila.append(b, s);
+  if (pendiente && item.estado === 1) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.cancelar = item.id;
+    btn.textContent = "Cancelar";
+    fila.appendChild(btn);
+  }
+  return fila;
+}
+
+function abrirModal(item) {
+  modalItem = item;
+  setTexto("modal-titulo", item.titulo || "Comando");
+  setTexto("modal-desc", item.descripcion || "");
+  setTexto("modal-trama", item.trama || "");
+  setTexto("modal-d02", ultimoPanel && ultimoPanel.d02_raw ? ultimoPanel.d02_raw : "aún no llega STARCOOL_CONSULTA");
+  document.getElementById("modal").hidden = false;
+  document.getElementById("modal-ok").disabled = false;
+  document.getElementById("modal-ok").focus();
+}
+function cerrarModal() { document.getElementById("modal").hidden = true; modalItem = null; }
+
+async function postJson(url, cuerpo) {
+  const respuesta = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(cuerpo)
+  });
+  const data = await respuesta.json();
+  if (!respuesta.ok) throw new Error(data.detalle || "No se pudo completar");
+  return data;
+}
+
+async function encolar(item) {
+  const cuerpo = {
+    trama: item.trama,
+    titulo: item.titulo || "",
+    descripcion: item.descripcion || "",
+    grupo: item.grupo || ""
+  };
+  if (equipoElegido) cuerpo.ip = equipoElegido;
+  const data = await postJson("/comando", cuerpo);
+  mostrarAviso((data.titulo || data.trama) + " quedó en cola.", false);
+  document.getElementById("cola").dataset.firma = "";
   await tick();
-}
-
-document.getElementById("envio").addEventListener("submit", (evento) => {
-  evento.preventDefault();
-  const campo = document.getElementById("trama");
-  const trama = campo.value.trim();
-  if (!trama) return;
-  campo.value = "";
-  enviar(trama);
-});
-
-function pintarConsignas(consignas) {
-  const orden = ["CO2_1","CO2_2","CO2_3","O2_1","O2_2","O2_3","H_1","H_2","H_3"];
-  const caja = document.getElementById("consignas");
-  caja.replaceChildren();
-  orden.forEach((clave) => {
-    if (!consignas || consignas[clave] == null) return;
-    const celda = document.createElement("div");
-    celda.className = "dato";
-    celda.innerHTML = "<span></span><strong></strong>";
-    celda.querySelector("span").textContent = clave;
-    celda.querySelector("strong").textContent = consignas[clave];
-    caja.appendChild(celda);
-  });
-}
-
-function pintarBits(palabra, flag) {
-  const caja = document.getElementById("bits");
-  caja.replaceChildren();
-  document.getElementById("inyector").textContent = palabra
-    ? "INYECTOR:" + palabra + "," + (flag || "")
-    : "";
-  if (!palabra) return;
-  [...palabra].forEach((bit) => {
-    const celda = document.createElement("i");
-    celda.className = bit === "1" ? "on" : "";
-    celda.textContent = bit;
-    caja.appendChild(celda);
-  });
-}
-
-function pintarEstado(estado, ip) {
-  const est = (estado && ip && estado[ip]) || {};
-  pintarConsignas(est.consignas || {});
-  document.getElementById("etileno").textContent = est.etileno
-    ? "Etileno " + est.etileno
-    : "";
-  pintarBits(est.inyector_bits, est.inyector_flag);
-  const star = [];
-  if (est.starcool_consulta) star.push("Consulta " + est.starcool_consulta);
-  if (est.starcool_salidas) star.push("Salidas " + est.starcool_salidas);
-  document.getElementById("starcool").textContent = star.join("\n");
-  const bloques = [];
-  if (est.ripener && est.ripener.length) bloques.push("RIPENER\n" + est.ripener.join("\n"));
-  if (est.reefer && est.reefer.length) bloques.push("REEFER\n" + est.reefer.join("\n"));
-  document.getElementById("bloques").textContent = bloques.join("\n");
-  const extras = [];
-  if (est.ultimo_ack) extras.push("Respuesta " + est.ultimo_ack);
-  if (est.ultimo_comando) extras.push("Último comando " + est.ultimo_comando);
-  document.getElementById("ack").textContent = extras.join(" · ");
 }
 
 function pintarLineas(lineas) {
   const frag = document.createDocumentFragment();
-  lineas.forEach((linea) => {
+  lineas.forEach(linea => {
+    if (equipoElegido && linea.ip !== equipoElegido) return;
     const fila = document.createElement("div");
     fila.className = linea.flujo === "out" ? "out" : "in";
     const meta = document.createElement("span");
     meta.className = "meta";
     meta.textContent = linea.hora + "  " + linea.ip + (linea.flujo === "out" ? "  >> " : "  ");
-    fila.appendChild(meta);
-    fila.appendChild(document.createTextNode(linea.texto));
+    fila.append(meta, document.createTextNode(linea.texto));
     frag.appendChild(fila);
   });
   log.appendChild(frag);
+  while (log.childNodes.length > 400) log.removeChild(log.firstChild);
   if (pegado) log.scrollTop = log.scrollHeight;
 }
 
-function pintarJson(data) {
-  const enlaces = data.enlaces || {};
-  document.getElementById("enlaces").textContent =
-    (enlaces.termoking || "") + "\n" + (enlaces.datos || "");
-  const caja = document.getElementById("jsons");
-  caja.replaceChildren();
-  data.dispositivos.filter((d) => d.tipo === "json").forEach((d) => {
-    const fila = document.createElement("div");
-    fila.className = "equipo";
-    const envio = d.ultimo_envio;
-    const detalle = envio
-      ? "TermoKing " + (envio.termoking ? "ok" : "fallo") + " · Datos " + (envio.datos ? "ok" : "fallo")
-      : "conectado, aún sin JSON nuevo";
-    fila.textContent = (d.equipo || "JSON") + " · " + d.ip + " · " + detalle;
-    caja.appendChild(fila);
-  });
-}
-
 function pintarConexion(data) {
-  const cerros = data.dispositivos.filter((d) => d.tipo === "cerro" && d.comando_activo);
+  const cerros = data.dispositivos.filter(d => d.tipo === "cerro" && d.comando_activo);
   const select = document.getElementById("ip");
-  const previa = select.value;
+  const previa = equipoElegido || select.value;
+  const ips = [];
+  cerros.forEach(d => { if (!ips.includes(d.ip)) ips.push(d.ip); });
+  if (data.panel && data.panel.ip && !ips.includes(data.panel.ip)) ips.push(data.panel.ip);
   select.replaceChildren();
-  cerros.forEach((d) => {
+  ips.forEach(ip => {
     const op = document.createElement("option");
-    op.value = d.ip;
-    op.textContent = d.ip;
+    op.value = ip;
+    op.textContent = ip;
     select.appendChild(op);
   });
-  select.hidden = cerros.length < 2;
-  if (previa && [...select.options].some((op) => op.value === previa)) select.value = previa;
-  ipActiva = select.value || (cerros[0] && cerros[0].ip) || "";
+  select.hidden = ips.length < 2;
+  if (previa && ips.includes(previa)) select.value = previa;
+  else if (ips[0]) select.value = ips[0];
+  equipoElegido = select.value || "";
   const pill = document.getElementById("conexion");
-  if (ipActiva) {
-    pill.textContent = "Conectado " + ipActiva;
-    pill.className = "pill ok";
+  const segundos = data.panel && data.panel.segundos;
+  if (cerros.length) {
+    pill.textContent = "Conectado " + (equipoElegido || cerros[0].ip);
+    pill.className = segundos != null && segundos > 8 ? "pill lento" : "pill ok";
   } else {
     pill.textContent = "Esperando equipo en " + (data.tcp || 9985);
     pill.className = "pill";
   }
-  document.getElementById("subtitulo").textContent = "Los equipos entran por TCP " + (data.tcp || 9985);
-  const claves = Object.keys(data.estado || {});
-  const ipLectura = (ipActiva && data.estado && data.estado[ipActiva])
-    ? ipActiva
-    : (claves[claves.length - 1] || "");
-  pintarEstado(data.estado, ipLectura);
-  pintarJson(data);
+  const jsons = data.dispositivos.filter(d => d.tipo === "json");
+  setTexto("json-nota", jsons.length ? "Hay telemetría JSON de otro equipo (" + jsons.map(d => d.equipo || d.ip).join(", ") + "). Eso sigue su camino. Los comandos de este panel no salen por esa API." : "");
+}
+
+function horaLima(ms, conFecha) {
+  const partes = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Lima",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    day: "2-digit", month: "2-digit"
+  }).formatToParts(new Date(ms));
+  const get = tipo => (partes.find(p => p.type === tipo) || {}).value || "";
+  const hora = get("hour") + ":" + get("minute");
+  return conFecha ? get("day") + "/" + get("month") + " " + hora : hora;
+}
+
+function zonasVisibles() {
+  return [...document.querySelectorAll("#zonas-graf input:checked")].map(el => Number(el.dataset.zona));
+}
+
+function dibujar(hostId, lecturaId, clave, puntos, objetivos) {
+  const host = document.getElementById(hostId);
+  const lectura = document.getElementById(lecturaId);
+  host.replaceChildren();
+  lectura.textContent = "";
+  const zonas = zonasVisibles();
+  if (!puntos || !puntos.length) {
+    host.textContent = "No hay lecturas en este rango.";
+    return;
+  }
+  const width = 720, height = 250, padL = 46, padR = 12, padT = 16, padB = 28;
+  let min = Infinity, max = -Infinity;
+  const toma = v => { if (v == null || Number.isNaN(Number(v))) return; min = Math.min(min, Number(v)); max = Math.max(max, Number(v)); };
+  puntos.forEach(p => zonas.forEach(z => toma(p[clave][z - 1])));
+  zonas.forEach(z => toma(objetivos && objetivos[clave] && objetivos[clave][String(z)]));
+  if (!Number.isFinite(min)) { host.textContent = "No hay valores válidos para graficar."; return; }
+  const margen = Math.max(0.4, (max - min) * 0.15);
+  min -= margen; max += margen;
+  const t0 = Date.parse(puntos[0].t), t1 = Date.parse(puntos[puntos.length - 1].t);
+  const span = Math.max(1, t1 - t0);
+  const xDe = t => padL + ((Date.parse(t) - t0) / span) * (width - padL - padR);
+  const yDe = v => padT + (1 - (v - min) / (max - min)) * (height - padT - padB);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+  const mismoDia = String(puntos[0].t).slice(0, 10) === String(puntos[puntos.length - 1].t).slice(0, 10);
+  const etiqueta = iso => {
+    const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+    return m ? (mismoDia ? m[4] : m[3] + "/" + m[2] + " " + m[4]) : "";
+  };
+  for (let i = 0; i < 4; i++) {
+    const valor = min + (max - min) * (i / 3);
+    const y = yDe(valor);
+    svg.appendChild(lineaSvg(padL, y, width - padR, y, "#2a3a58", ""));
+    const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    texto.setAttribute("x", "4"); texto.setAttribute("y", String(y + 4));
+    texto.setAttribute("fill", "#8ea0c4"); texto.setAttribute("font-size", "11");
+    texto.textContent = fmt(valor);
+    svg.appendChild(texto);
+  }
+  [0, 0.5, 1].forEach(f => {
+    const x = padL + f * (width - padL - padR);
+    const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    texto.setAttribute("x", String(f === 0 ? padL : f === 1 ? width - padR : x));
+    texto.setAttribute("y", String(height - 8));
+    texto.setAttribute("text-anchor", f === 0 ? "start" : f === 1 ? "end" : "middle");
+    texto.setAttribute("fill", "#8ea0c4"); texto.setAttribute("font-size", "11");
+    if (f === 0) texto.textContent = etiqueta(puntos[0].t);
+    else if (f === 1) texto.textContent = etiqueta(puntos[puntos.length - 1].t);
+    else texto.textContent = horaLima(t0 + span * f, !mismoDia);
+    svg.appendChild(texto);
+  });
+  zonas.forEach(z => {
+    const color = COLORES[z - 1];
+    const obj = objetivos && objetivos[clave] && Number(objetivos[clave][String(z)]);
+    if (Number.isFinite(obj)) svg.appendChild(lineaSvg(padL, yDe(obj), width - padR, yDe(obj), color, "4 4"));
+    let tramo = [];
+    const volcar = () => {
+      if (tramo.length >= 2) {
+        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        poly.setAttribute("points", tramo.join(" "));
+        poly.setAttribute("fill", "none");
+        poly.setAttribute("stroke", color);
+        poly.setAttribute("stroke-width", "2");
+        svg.appendChild(poly);
+      } else if (tramo.length === 1) {
+        const [cx, cy] = tramo[0].split(",");
+        const cir = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        cir.setAttribute("cx", cx); cir.setAttribute("cy", cy); cir.setAttribute("r", "3.5"); cir.setAttribute("fill", color);
+        svg.appendChild(cir);
+      }
+      tramo = [];
+    };
+    puntos.forEach(p => {
+      const valor = p[clave][z - 1];
+      if (valor == null) volcar();
+      else tramo.push(xDe(p.t).toFixed(1) + "," + yDe(valor).toFixed(1));
+    });
+    volcar();
+  });
+  host.appendChild(svg);
+  svg.addEventListener("mousemove", ev => {
+    const rect = svg.getBoundingClientRect();
+    const x = ((ev.clientX - rect.left) / rect.width) * width;
+    let mejor = 0, dist = Infinity;
+    puntos.forEach((p, i) => {
+      const d = Math.abs(xDe(p.t) - x);
+      if (d < dist) { dist = d; mejor = i; }
+    });
+    const p = puntos[mejor];
+    lectura.textContent = etiqueta(p.t) + " · " + zonas.map(z => "Z" + z + " " + fmt(p[clave][z - 1]) + " %").join("  ");
+  });
+}
+function lineaSvg(x1, y1, x2, y2, color, dash) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  el.setAttribute("x1", x1); el.setAttribute("y1", y1); el.setAttribute("x2", x2); el.setAttribute("y2", y2);
+  el.setAttribute("stroke", color); el.setAttribute("stroke-width", "1");
+  if (dash) el.setAttribute("stroke-dasharray", dash);
+  return el;
+}
+
+function pintarAnalisis(data) {
+  const caja = document.getElementById("analisis");
+  caja.replaceChildren();
+  ["co2", "o2"].forEach(gas => [1, 2, 3].forEach(z => {
+    const a = data.analisis[gas][String(z)];
+    const obj = data.objetivos[gas][String(z)];
+    const card = document.createElement("article");
+    const banda = a.desviacion_media == null ? "none" : a.desviacion_media <= 1 ? "ok" : a.desviacion_media <= 2 ? "warn" : "danger";
+    card.className = "ana " + banda;
+    const titulo = document.createElement("span");
+    titulo.textContent = "Zona " + z + " · " + gas.toUpperCase().replace("2", "₂");
+    const fuerte = document.createElement("strong");
+    fuerte.textContent = a.promedio == null ? "—" : fmt(a.promedio) + " %";
+    const detalle = document.createElement("p");
+    detalle.className = "leyenda";
+    const validas = a.validas || 0;
+    const pct = n => validas ? Math.round(100 * n / validas) + " %" : "0 %";
+    detalle.textContent = "Objetivo " + fmt(obj) + " % · Δ media " + fmt(a.desviacion_media) + " · mín " + fmt(a.min) + " · máx " + fmt(a.max) + ". " + a.validas + " válidas, " + a.reinicios + " reinicios. ≤ 1: " + pct(a.en_1) + " · ≤ 2: " + pct(a.en_2) + " · fuera: " + pct(a.fuera) + ".";
+    card.append(titulo, fuerte, detalle);
+    caja.appendChild(card);
+  }));
+}
+function pintarTabla(filas) {
+  const caja = document.getElementById("tabla");
+  caja.replaceChildren();
+  if (!filas || !filas.length) { caja.textContent = "Sin filas en el rango."; return; }
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  ["Fecha", "Z1 CO₂", "Z1 O₂", "Z2 CO₂", "Z2 O₂", "Z3 CO₂", "Z3 O₂"].forEach(t => {
+    const th = document.createElement("th"); th.textContent = t; head.appendChild(th);
+  });
+  table.appendChild(head);
+  filas.forEach(fila => {
+    const tr = document.createElement("tr");
+    const fecha = document.createElement("td");
+    fecha.textContent = fila.fecha || "";
+    tr.appendChild(fecha);
+    fila.zonas.forEach(z => ["co2", "o2"].forEach(gas => {
+      const td = document.createElement("td");
+      const g = z[gas];
+      td.textContent = (g.valor == null ? "—" : fmt(g.valor)) + (flecha(g.tendencia) ? " " + flecha(g.tendencia) : "") + (g.reinicio ? " reinicio" : "");
+      if (g.reinicio) td.className = "marca-r";
+      tr.appendChild(td);
+    }));
+    table.appendChild(tr);
+  });
+  caja.appendChild(table);
+}
+async function cargarLecturas(silencio) {
+  const desdeF = document.getElementById("desde").value;
+  const hastaF = document.getElementById("hasta").value;
+  if (!desdeF || !hastaF) return;
+  const q = new URLSearchParams({desde: desdeF, hasta: hastaF});
+  if (equipoElegido) q.set("ip", equipoElegido);
+  const respuesta = await fetch("/lecturas?" + q.toString());
+  const data = await respuesta.json();
+  if (!respuesta.ok) throw new Error(data.detalle || "No se pudo leer el histórico");
+  ultimaHist = data;
+  const avisoHist = data.aviso || (data.muestreada ? "La gráfica muestra " + data.grafica + " de " + data.total + " lecturas. El análisis usa todas." : data.total + " lecturas.");
+  setTexto("hist-aviso", avisoHist);
+  pintarAnalisis(data);
+  dibujar("graf-co2", "lectura-co2", "co2", data.puntos, data.objetivos);
+  dibujar("graf-o2", "lectura-o2", "o2", data.puntos, data.objetivos);
+  pintarTabla(data.tabla);
+  if (!silencio) mostrarAviso("Histórico listo.", false);
+}
+
+function ir(tab) {
+  document.body.dataset.tab = tab;
+  document.querySelectorAll("[data-tabbtn]").forEach(b => {
+    b.classList.toggle("activa", b.dataset.tabbtn === tab);
+    b.setAttribute("aria-selected", b.dataset.tabbtn === tab ? "true" : "false");
+  });
+  document.getElementById("tab-vivo").hidden = tab !== "vivo";
+  document.getElementById("tab-hist").hidden = tab !== "hist";
+  document.getElementById("tab-serial").hidden = tab !== "serial";
+  if (tab === "hist") cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
+  if (tab === "serial" && pegado) log.scrollTop = log.scrollHeight;
 }
 
 async function tick() {
-  const respuesta = await fetch("/serial?desde=" + desde);
+  const q = equipoElegido ? "&equipo=" + encodeURIComponent(equipoElegido) : "";
+  const respuesta = await fetch("/serial?desde=" + desde + q);
   const data = await respuesta.json();
   if (data.lineas && data.lineas.length) pintarLineas(data.lineas);
   if (typeof data.siguiente === "number") desde = data.siguiente;
+  setTexto("reloj", (data.hora || "") + " · America/Lima");
+  if (!fechasListas && data.hoy) {
+    document.getElementById("desde").value = data.hoy;
+    document.getElementById("hasta").value = data.hoy;
+    fechasListas = true;
+  }
   pintarConexion(data);
+  if (data.panel) pintarVivo(data.panel);
+  if (data.config) {
+    pintarBotones(data.config.comandos);
+    pintarEditor(data.config.comandos);
+    pintarSalidasEditor(data.config.salidas);
+    llenarEtileno(data.config.etileno);
+  }
+  pintarCola(data.cola);
+  if (falloRed) { falloRed = false; }
 }
 
-async function cargarComandos() {
-  const respuesta = await fetch("/comandos");
-  const data = await respuesta.json();
-  const caja = document.getElementById("comandos");
-  const grupos = new Map();
-  (data.comandos || []).forEach((item) => {
-    if (!grupos.has(item.grupo)) grupos.set(item.grupo, []);
-    grupos.get(item.grupo).push(item);
-  });
-  grupos.forEach((items, nombre) => {
-    const bloque = document.createElement("div");
-    bloque.className = "grupo";
-    const titulo = document.createElement("p");
-    titulo.textContent = nombre;
-    const botones = document.createElement("div");
-    items.forEach((item) => {
-      const boton = document.createElement("button");
-      boton.type = "button";
-      boton.textContent = item.etiqueta;
-      boton.title = item.trama;
-      boton.addEventListener("click", () => enviar(item.trama));
-      botones.appendChild(boton);
-    });
-    bloque.appendChild(titulo);
-    bloque.appendChild(botones);
-    caja.appendChild(bloque);
-  });
-}
+document.querySelectorAll("[data-tabbtn]").forEach(b => b.addEventListener("click", () => ir(b.dataset.tabbtn)));
+document.getElementById("ip").addEventListener("change", () => {
+  equipoElegido = document.getElementById("ip").value;
+  log.replaceChildren();
+  desde = 0;
+  tick().catch(() => {});
+});
+document.getElementById("refrescar").addEventListener("click", () => {
+  tick().catch(e => mostrarAviso(e.message, true));
+  if (document.body.dataset.tab === "hist") cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("form-obj").addEventListener("input", () => { objSucio = true; });
+document.getElementById("form-obj").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  guardando = true;
+  try {
+    await postJson("/config", {objetivos: leerObjetivos()});
+    objSucio = false;
+    firmaObj = "";
+    mostrarAviso("Objetivos guardados. Colorean las zonas y el análisis.", false);
+    await tick();
+  } catch (e) { mostrarAviso(e.message, true); }
+  finally { guardando = false; }
+});
+document.getElementById("seguir-equipo").addEventListener("click", async () => {
+  guardando = true;
+  try {
+    await postJson("/config", {seguir_equipo: true});
+    objSucio = false;
+    firmaObj = "";
+    mostrarAviso("Los objetivos vuelven a seguir la consigna del equipo.", false);
+    await tick();
+  } catch (e) { mostrarAviso(e.message, true); }
+  finally { guardando = false; }
+});
+document.getElementById("salidas-editor").addEventListener("input", () => { salSucio = true; });
+document.getElementById("guardar-salidas").addEventListener("click", async () => {
+  guardando = true;
+  try {
+    await postJson("/config", {salidas: leerSalidas()});
+    salSucio = false;
+    firmaSal = "";
+    document.getElementById("salidas-vista").dataset.firma = "";
+    mostrarAviso("Significado de salidas guardado.", false);
+    await tick();
+  } catch (e) { mostrarAviso(e.message, true); }
+  finally { guardando = false; }
+});
+["eti-nombre", "eti-unidad", "eti-nota-edit"].forEach(id => document.getElementById(id).addEventListener("input", () => { etiSucio = true; }));
+document.getElementById("guardar-etileno").addEventListener("click", async () => {
+  guardando = true;
+  try {
+    await postJson("/config", {etileno: {
+      nombre: document.getElementById("eti-nombre").value,
+      unidad: document.getElementById("eti-unidad").value,
+      nota: document.getElementById("eti-nota-edit").value
+    }});
+    etiSucio = false;
+    firmaEti = "";
+    mostrarAviso("Etileno actualizado.", false);
+    await tick();
+  } catch (e) { mostrarAviso(e.message, true); }
+  finally { guardando = false; }
+});
+document.getElementById("editor").addEventListener("input", () => { editorSucio = true; });
+document.getElementById("editor").addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".c-borrar");
+  if (!btn) return;
+  btn.closest(".fila-cmd").remove();
+  editorSucio = true;
+});
+document.getElementById("agregar-cmd").addEventListener("click", () => {
+  document.getElementById("editor").appendChild(filaComando({grupo: "General"}));
+  editorSucio = true;
+});
+document.getElementById("guardar-cmd").addEventListener("click", async () => {
+  guardando = true;
+  try {
+    const data = await postJson("/comandos", {comandos: leerCatalogo()});
+    editorSucio = false;
+    firmaEditor = "";
+    firmaBotones = "";
+    pintarBotones(data.comandos);
+    pintarEditor(data.comandos);
+    mostrarAviso("Catálogo guardado.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+  finally { guardando = false; }
+});
+document.getElementById("libre").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const trama = document.getElementById("trama-libre").value.trim();
+  if (!trama) return;
+  abrirModal({titulo: "Trama libre", descripcion: "Texto escrito a mano.", trama, grupo: "General"});
+});
+document.getElementById("modal-no").addEventListener("click", cerrarModal);
+document.getElementById("modal").addEventListener("click", (ev) => { if (ev.target.id === "modal") cerrarModal(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") cerrarModal(); });
+document.getElementById("modal-ok").addEventListener("click", async () => {
+  if (!modalItem) return;
+  document.getElementById("modal-ok").disabled = true;
+  try {
+    await encolar(modalItem);
+    document.getElementById("trama-libre").value = "";
+    cerrarModal();
+  } catch (e) {
+    mostrarAviso(e.message, true);
+    document.getElementById("modal-ok").disabled = false;
+  }
+});
+document.getElementById("cola").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-cancelar]");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    await postJson("/cola/cancelar", {id: btn.dataset.cancelar});
+    document.getElementById("cola").dataset.firma = "";
+    mostrarAviso("Comando cancelado.", false);
+    await tick();
+  } catch (e) { mostrarAviso(e.message, true); }
+});
+document.getElementById("form-hist").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  cargarLecturas(false).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("zonas-graf").addEventListener("change", () => {
+  if (!ultimaHist) return;
+  dibujar("graf-co2", "lectura-co2", "co2", ultimaHist.puntos, ultimaHist.objetivos);
+  dibujar("graf-o2", "lectura-o2", "o2", ultimaHist.puntos, ultimaHist.objetivos);
+});
 
-cargarComandos().then(tick);
-setInterval(() => { tick().catch(() => {}); }, 1000);
+tick().catch(e => mostrarAviso(e.message, true));
+setInterval(() => { tick().catch(() => { if (!falloRed) { falloRed = true; mostrarAviso("Sin respuesta del panel", true); } }); }, 1000);
+setInterval(() => {
+  if (document.body.dataset.tab === "hist") cargarLecturas(true).catch(() => {});
+}, 15000);
 </script>
 </body>
 </html>
