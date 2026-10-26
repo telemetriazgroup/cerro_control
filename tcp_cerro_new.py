@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 import os
 import re
@@ -803,31 +804,48 @@ def _cookie(handler, nombre):
     return morsel.value if morsel else ""
 
 
-def _sesion_valida(handler):
+def _sesion(handler):
     token = _cookie(handler, SESION_NOMBRE)
     if not token:
-        return False
+        return None
     momento = time.monotonic()
     with _sesiones_lock:
-        expira = _sesiones.get(token)
-        if not expira or expira < momento:
+        datos = _sesiones.get(token)
+        if not isinstance(datos, dict) or datos.get("expira", 0) < momento:
             _sesiones.pop(token, None)
-            return False
-    return True
+            return None
+        return dict(datos)
 
 
 def _puede_ver(handler):
-    return _autorizado(handler) or _sesion_valida(handler)
+    return _autorizado(handler) or _sesion(handler) is not None
 
 
-def _abrir_sesion():
+def _rol_de(handler):
+    if _autorizado(handler):
+        return "administrador"
+    datos = _sesion(handler)
+    if not datos:
+        return ""
+    return datos.get("rol") or "administrador"
+
+
+def _es_admin(handler):
+    return _rol_de(handler) == "administrador"
+
+
+def _abrir_sesion(usuario, rol):
     token = secrets.token_urlsafe(32)
     limite = time.monotonic()
     with _sesiones_lock:
-        vencidas = [k for k, expira in _sesiones.items() if expira < limite]
+        vencidas = [k for k, datos in _sesiones.items() if not isinstance(datos, dict) or datos.get("expira", 0) < limite]
         for k in vencidas:
             _sesiones.pop(k, None)
-        _sesiones[token] = limite + SESION_SEG
+        _sesiones[token] = {
+            "expira": limite + SESION_SEG,
+            "usuario": usuario,
+            "rol": rol,
+        }
     return token
 
 
@@ -846,10 +864,107 @@ def _cabecera_cerrar():
     return f"{SESION_NOMBRE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
 
 
+_usuarios_lock = threading.Lock()
+_RUTA_USUARIOS = os.path.join(BASE_DIR, "usuarios.json")
+_USUARIO_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+
+
+def _hash_clave(clave, sal=None):
+    sal = sal or secrets.token_hex(16)
+    derivado = hashlib.pbkdf2_hmac("sha256", clave.encode("utf-8"), bytes.fromhex(sal), 120000).hex()
+    return {"sal": sal, "hash": derivado}
+
+
+def _clave_coincide(clave, guardada):
+    if not guardada:
+        return False
+    actual = _hash_clave(clave, guardada.get("sal"))["hash"]
+    return hmac.compare_digest(_rellenar(actual), _rellenar(guardada.get("hash") or ""))
+
+
+def _leer_o_semilla():
+    if not os.path.exists(_RUTA_USUARIOS):
+        semilla = [{
+            "usuario": USUARIO_PANEL,
+            "rol": "administrador",
+            **_hash_clave(CLAVE_PANEL),
+        }]
+        _escribir_usuarios(semilla)
+        return semilla
+    try:
+        with open(_RUTA_USUARIOS, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        data = []
+    return data if isinstance(data, list) else []
+
+
+def _cargar_usuarios():
+    with _usuarios_lock:
+        return _leer_o_semilla()
+
+
+def _escribir_usuarios(usuarios):
+    os.makedirs(BASE_DIR, exist_ok=True)
+    temporal = _RUTA_USUARIOS + ".tmp"
+    with open(temporal, "w", encoding="utf-8") as fh:
+        json.dump(usuarios, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporal, _RUTA_USUARIOS)
+
+
+def _usuario_publico(item):
+    return {"usuario": item.get("usuario"), "rol": item.get("rol")}
+
+
+def _buscar_usuario(usuario):
+    for item in _cargar_usuarios():
+        if item.get("usuario") == usuario:
+            return item
+    return None
+
+
 def _credenciales_ok(usuario, clave):
-    usuario_ok = hmac.compare_digest(_rellenar(usuario), _rellenar(USUARIO_PANEL))
-    clave_ok = hmac.compare_digest(_rellenar(clave), _rellenar(CLAVE_PANEL))
-    return usuario_ok and clave_ok
+    item = _buscar_usuario(usuario)
+    if item is None or item.get("rol") not in ("administrador", "monitoreo"):
+        return None
+    if not _clave_coincide(clave, item):
+        return None
+    return item
+
+
+def _crear_usuario(usuario, clave, rol):
+    usuario = str(usuario or "").strip()
+    clave = str(clave or "")
+    rol = str(rol or "").strip()
+    if not _USUARIO_RE.match(usuario):
+        raise ErrorComando(400, "el usuario usa letras, números, punto, guion o guion bajo, de 3 a 32 caracteres")
+    if len(clave) < 8:
+        raise ErrorComando(400, "la contraseña necesita al menos 8 caracteres")
+    if rol not in ("administrador", "monitoreo"):
+        raise ErrorComando(400, "el rol es administrador o monitoreo")
+    with _usuarios_lock:
+        usuarios = _leer_o_semilla()
+        if any(item.get("usuario") == usuario for item in usuarios):
+            raise ErrorComando(400, "ese usuario ya existe")
+        usuarios.append({"usuario": usuario, "rol": rol, **_hash_clave(clave)})
+        _escribir_usuarios(usuarios)
+    return [_usuario_publico(item) for item in usuarios]
+
+
+def _quitar_usuario(usuario):
+    usuario = str(usuario or "").strip()
+    with _usuarios_lock:
+        usuarios = _leer_o_semilla()
+        queda = [item for item in usuarios if item.get("usuario") != usuario]
+        if len(queda) == len(usuarios):
+            raise ErrorComando(404, "no está ese usuario")
+        if not any(item.get("rol") == "administrador" for item in queda):
+            raise ErrorComando(400, "tiene que quedar al menos un administrador")
+        _escribir_usuarios(queda)
+    return [_usuario_publico(item) for item in queda]
 
 
 def _demasiados_intentos(ip):
@@ -930,11 +1045,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         datos = parse_qs(crudo, keep_blank_values=True)
         usuario = (datos.get("usuario") or [""])[0]
         clave = (datos.get("clave") or [""])[0]
-        if not _credenciales_ok(usuario, clave):
+        cuenta = _credenciales_ok(usuario, clave)
+        if cuenta is None:
             _anotar_fallo(ip)
             self._redirigir("/login?e=1")
             return
-        self._redirigir("/", _cabecera_sesion(_abrir_sesion()))
+        self._redirigir("/", _cabecera_sesion(_abrir_sesion(cuenta["usuario"], cuenta["rol"])))
 
     def _salir(self):
         _cerrar_sesion(self)
@@ -959,6 +1075,17 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._redirigir("/login")
                 return
             self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
+            return
+        if ruta == "/sesion":
+            datos = _sesion(self) or {}
+            self._json(200, {
+                "ok": True,
+                "usuario": datos.get("usuario") or USUARIO_PANEL,
+                "rol": _rol_de(self),
+            })
+            return
+        if not _es_admin(self) and ruta in ("/historial-comandos", "/archivos", "/usuarios", "/comandos", "/config", "/dispositivos", "/cerro"):
+            self._json(403, {"ok": False, "detalle": "esta cuenta solo puede ver el panel"})
             return
         if ruta == "/":
             self._html()
@@ -995,7 +1122,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                 ip = ip.strip() or None
             if equipo:
                 equipo = equipo.strip() or None
-            self._json(200, snapshot_serial(desde, ip, equipo))
+            data = snapshot_serial(desde, ip, equipo)
+            rol = _rol_de(self)
+            datos = _sesion(self) or {}
+            data["rol"] = rol
+            data["usuario"] = datos.get("usuario") or ""
+            if rol == "monitoreo":
+                data["lineas"] = []
+                data["cola"] = {"pendientes": [], "recientes": []}
+                config = dict(data.get("config") or {})
+                config.pop("comandos", None)
+                data["config"] = config
+            self._json(200, data)
         elif ruta == "/historial-comandos":
             consulta = parse_qs(urlparse(self.path).query)
             hoy = ahora().date().isoformat()
@@ -1033,6 +1171,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(cuerpo)
         elif ruta == "/archivos":
             self._json(200, {"archivos": listar_capturas()})
+        elif ruta == "/usuarios":
+            self._json(200, {"ok": True, "usuarios": [_usuario_publico(item) for item in _cargar_usuarios()]})
         else:
             self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
 
@@ -1097,6 +1237,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not _puede_ver(self):
             self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
             return
+        if not _es_admin(self) and ruta != "/salir":
+            self._json(403, {"ok": False, "detalle": "esta cuenta solo puede ver el panel"})
+            return
         try:
             if ruta == "/comando":
                 data = self._cuerpo_json()
@@ -1128,6 +1271,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif ruta == "/archivos/incorporar":
                 data = self._cuerpo_json()
                 self._json(200, _incorporar_guardado(data.get("nombre"), bool(data.get("reemplazar"))))
+            elif ruta == "/usuarios":
+                data = self._cuerpo_json()
+                cuentas = _crear_usuario(data.get("usuario"), data.get("clave"), data.get("rol"))
+                self._json(200, {"ok": True, "usuarios": cuentas})
+            elif ruta == "/usuarios/quitar":
+                data = self._cuerpo_json()
+                cuentas = _quitar_usuario(data.get("usuario"))
+                self._json(200, {"ok": True, "usuarios": cuentas})
             else:
                 self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:

@@ -225,6 +225,21 @@
     .aviso { bottom: 72px; }
     aside { position: static; max-height: none; }
   }
+  #quien { color: var(--muted); font-size: 12px; align-self: center; }
+  body:not([data-rol]) .solo-admin,
+  body:not([data-rol]) #col-cmd,
+  body:not([data-rol]) #abrir-cmd,
+  body[data-rol="monitoreo"] .solo-admin,
+  body[data-rol="monitoreo"] #col-cmd,
+  body[data-rol="monitoreo"] #abrir-cmd { display: none !important; }
+  body[data-rol="monitoreo"] .marco { grid-template-columns: 1fr; }
+  body[data-rol="monitoreo"] #det-temp > .leyenda { display: none; }
+  body[data-rol="monitoreo"] #det-temp > summary {
+    pointer-events: none;
+    list-style: none;
+  }
+  body[data-rol="monitoreo"] #det-temp > summary::-webkit-details-marker { display: none; }
+  body[data-rol="monitoreo"] #det-temp > summary::after { content: none; }
 </style>
 </head>
 <body data-tab="vivo">
@@ -243,6 +258,7 @@
     </div>
     <select id="ip" hidden></select>
     <button type="button" id="refrescar">Actualizar</button>
+    <span id="quien"></span>
     <button type="button" id="abrir-cmd">Comandos</button>
     <button type="button" id="salir">Salir</button>
     <div class="pill" id="conexion">Esperando equipo</div>
@@ -251,8 +267,9 @@
 <nav class="tabs" role="tablist">
   <button type="button" class="activa" data-tabbtn="vivo">En vivo</button>
   <button type="button" data-tabbtn="hist">Histórico O₂ / CO₂</button>
-  <button type="button" data-tabbtn="serial">Serial</button>
-  <button type="button" data-tabbtn="cmdhist">Historial de comandos</button>
+  <button type="button" class="solo-admin" data-tabbtn="serial">Serial</button>
+  <button type="button" class="solo-admin" data-tabbtn="cmdhist">Historial de comandos</button>
+  <button type="button" class="solo-admin" data-tabbtn="usuarios">Usuarios</button>
 </nav>
 <div class="marco">
   <main>
@@ -264,7 +281,7 @@
           <div class="reefer-grid" id="reefer-cards"></div>
         </details>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Ciclo</h2>
         <div class="pasos" id="pasos">
           <span class="paso" data-paso="servidor">Servidor</span>
@@ -279,7 +296,7 @@
         </div>
         <p class="leyenda" id="paso-texto">El comando encolado sale justo después de STARCOOL:PLATAFORMA.</p>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <details class="plegado" id="det-sensores">
           <summary>Sensores</summary>
           <p class="mono" id="d02-raw">Esperando STARCOOL_CONSULTA</p>
@@ -294,7 +311,7 @@
           <summary id="obj-resumen">Objetivos CO₂ / O₂</summary>
           <p class="leyenda" id="obj-origen"></p>
           <p class="leyenda" id="obj-equipo"></p>
-          <form id="form-obj">
+          <form id="form-obj" class="solo-admin">
             <div class="rejilla">
               <label>CO₂ zona 1<input id="obj-co2-1" inputmode="decimal" step="0.1" min="0" max="100"></label>
               <label>CO₂ zona 2<input id="obj-co2-2" inputmode="decimal" step="0.1" min="0" max="100"></label>
@@ -315,14 +332,14 @@
         <article class="zona" id="zona-2"><header><h3>Zona 2</h3><span class="badge" id="ctrl-2">—</span></header><div class="gases"><div class="gas none" id="gas-co2-2"><span class="etiq">CO₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div><div class="gas none" id="gas-o2-2"><span class="etiq">O₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div></div></article>
         <article class="zona" id="zona-3"><header><h3>Zona 3</h3><span class="badge" id="ctrl-3">—</span></header><div class="gases"><div class="gas none" id="gas-co2-3"><span class="etiq">CO₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div><div class="gas none" id="gas-o2-3"><span class="etiq">O₂</span><strong>—</strong><small class="obj"></small><small class="delta"></small><small class="nota"></small></div></div></article>
       </div>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Compresores</h2>
         <div class="comps">
           <article class="comp off" id="comp-1"><div><span class="etiq">Compresor 1</span><strong>Apagado</strong><small>Estado 14: —</small></div></article>
           <article class="comp off" id="comp-2"><div><span class="etiq">Compresor 2</span><strong>Apagado</strong><small>Estado 15: —</small></div></article>
         </div>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Humedad</h2>
         <div class="hums">
           <div class="hum" id="hum-1"><span>Zona 1 humedad</span><strong>—</strong><small class="nota"></small></div>
@@ -330,18 +347,18 @@
           <div class="hum" id="hum-3"><span>Zona 3 humedad</span><strong>—</strong><small class="nota"></small></div>
         </div>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Estados adicionales</h2>
         <div id="estados" class="botones"></div>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Inyectores</h2>
         <p class="leyenda">0 = encendido, 1 = apagado. El número después de la coma no se interpreta.</p>
         <p class="mono" id="bitmap-raw"></p>
         <div class="bits" id="bits"></div>
         <div id="valvulas"></div>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <details class="plegado" id="det-salidas">
           <summary>STARCOOL_SALIDAS</summary>
           <p class="mono" id="salidas-raw"></p>
@@ -350,7 +367,7 @@
           <div class="acciones"><button type="button" id="guardar-salidas" class="primario">Guardar significados</button></div>
         </details>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2 id="eti-titulo">Etileno</h2>
         <p class="eti-valor" id="eti-valor">—</p>
         <p class="leyenda" id="eti-nota"></p>
@@ -365,13 +382,13 @@
           <div class="acciones"><button type="button" id="guardar-etileno" class="primario">Guardar etileno</button></div>
         </details>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <details class="plegado" id="det-rs">
           <summary>Canal rs</summary>
           <div id="rs"><p>Aún no llega RIPENER ni REEFER_QUEST.</p></div>
         </details>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <details class="plegado">
           <summary>Datos total</summary>
           <pre id="datos" class="mono"></pre>
@@ -381,7 +398,7 @@
     <div id="tab-hist" hidden>
       <section class="bloque">
         <h2>Histórico O₂ / CO₂</h2>
-        <p class="leyenda">Cada STARCOOL_CONSULTA queda guardada aquí. El promedio ignora los reinicios 0 y 25.5. La desviación se calcula contra los objetivos de ahora.</p>
+        <p class="leyenda solo-admin">Cada STARCOOL_CONSULTA queda guardada aquí. El promedio ignora los reinicios 0 y 25.5. La desviación se calcula contra los objetivos de ahora.</p>
         <form id="form-hist" class="rango">
           <label class="hora">Desde<input type="datetime-local" id="desde" step="3600"></label>
           <label class="hora">Hasta<input type="datetime-local" id="hasta" step="3600"></label>
@@ -391,15 +408,17 @@
         </form>
         <p class="leyenda">La hora elegida entra completa. Para ver un solo tramo, ponga la misma hora en desde y hasta.</p>
         <p class="leyenda" id="hist-aviso"></p>
-        <h2>Archivo del serial</h2>
-        <p class="leyenda">Sube un txt con nombre cerro_dia_mes_año.txt. También vale cerro_dia_mes_año_extra.txt. El CO₂, el O₂ y el reefer de cada ciclo quedan en la hora de STARCOOL_CONSULTA. Si ese día ya tiene lecturas, hay que confirmar el reemplazo.</p>
-        <div class="rango">
-          <label class="hora">Archivo<input type="file" id="archivo-log" accept=".txt,text/plain"></label>
-          <button type="button" id="subir-log" class="primario">Subir e incorporar</button>
+        <div class="solo-admin">
+          <h2>Archivo del serial</h2>
+          <p class="leyenda">Sube un txt con nombre cerro_dia_mes_año.txt. También vale cerro_dia_mes_año_extra.txt. El CO₂, el O₂ y el reefer de cada ciclo quedan en la hora de STARCOOL_CONSULTA. Si ese día ya tiene lecturas, hay que confirmar el reemplazo.</p>
+          <div class="rango">
+            <label class="hora">Archivo<input type="file" id="archivo-log" accept=".txt,text/plain"></label>
+            <button type="button" id="subir-log" class="primario">Subir e incorporar</button>
+          </div>
+          <div id="archivos-lista"></div>
         </div>
-        <div id="archivos-lista"></div>
       </section>
-      <div class="analisis" id="analisis"></div>
+      <div class="analisis solo-admin" id="analisis"></div>
       <section class="bloque">
         <h2>CO₂ y O₂</h2>
         <div class="rango" id="gases-graf">
@@ -426,11 +445,13 @@
         </div>
         <div class="grafica" id="graf-temp"></div>
         <p class="leyenda" id="leyenda-temp"></p>
-        <h2>Evolución por hora</h2>
-        <p class="leyenda">De hora en hora, con las curvas que están activas. El 0 y el 25.5 no entran: se usa el último valor válido.</p>
-        <div id="horas-graf"></div>
+        <div class="solo-admin">
+          <h2>Evolución por hora</h2>
+          <p class="leyenda">De hora en hora, con las curvas que están activas. El 0 y el 25.5 no entran: se usa el último valor válido.</p>
+          <div id="horas-graf"></div>
+        </div>
       </section>
-      <section class="bloque">
+      <section class="bloque solo-admin">
         <h2>Lecturas del ciclo</h2>
         <p class="leyenda">Cada fila junta el CO₂ y el O₂ con el reefer de ese ciclo, a la hora de la consulta.</p>
         <div class="tabla" id="tabla"></div>
@@ -471,6 +492,24 @@
         <pre id="log"></pre>
       </section>
       <p class="leyenda" id="json-nota"></p>
+    </div>
+    <div id="tab-usuarios" hidden>
+      <section class="bloque">
+        <h2>Usuarios</h2>
+        <p class="leyenda">El administrador usa todo el panel. Monitoreo ve en vivo las temperaturas, el estado de los objetivos y las zonas de CO₂ y O₂. En el histórico ve las gráficas y puede exportar Excel o PDF.</p>
+        <form id="form-usuario" class="rango">
+          <label>Usuario<input id="nuevo-usuario" autocomplete="off" maxlength="32" required></label>
+          <label>Contraseña<input id="nuevo-clave" type="password" autocomplete="new-password" minlength="8" required></label>
+          <label>Rol
+            <select id="nuevo-rol">
+              <option value="monitoreo">Monitoreo</option>
+              <option value="administrador">Administrador</option>
+            </select>
+          </label>
+          <button class="primario" type="submit">Crear usuario</button>
+        </form>
+        <div id="usuarios-lista"></div>
+      </section>
     </div>
   </main>
   <aside id="col-cmd">
@@ -1482,7 +1521,27 @@ async function cargarLecturas(silencio) {
   if (!silencio) mostrarAviso("Histórico listo.", false);
 }
 
+function esMonitor() {
+  return document.body.dataset.rol === "monitoreo";
+}
+
+function aplicarRol(rol, usuario) {
+  const siguiente = rol === "monitoreo" ? "monitoreo" : "administrador";
+  document.body.dataset.rol = siguiente;
+  const quien = document.getElementById("quien");
+  if (quien) quien.textContent = usuario ? usuario + (siguiente === "monitoreo" ? " · monitoreo" : " · administrador") : "";
+  if (siguiente === "monitoreo") {
+    const temp = document.getElementById("det-temp");
+    const obj = document.getElementById("det-obj");
+    if (temp) temp.open = true;
+    if (obj) obj.open = true;
+    const tab = document.body.dataset.tab;
+    if (tab !== "vivo" && tab !== "hist") ir("vivo");
+  }
+}
+
 function ir(tab) {
+  if (esMonitor() && tab !== "vivo" && tab !== "hist") tab = "vivo";
   document.body.dataset.tab = tab;
   document.querySelectorAll("[data-tabbtn]").forEach(b => {
     b.classList.toggle("activa", b.dataset.tabbtn === tab);
@@ -1492,11 +1551,13 @@ function ir(tab) {
   document.getElementById("tab-hist").hidden = tab !== "hist";
   document.getElementById("tab-serial").hidden = tab !== "serial";
   document.getElementById("tab-cmdhist").hidden = tab !== "cmdhist";
+  document.getElementById("tab-usuarios").hidden = tab !== "usuarios";
   if (tab === "hist") {
     cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
-    listarArchivos().catch(() => {});
+    if (!esMonitor()) listarArchivos().catch(() => {});
   }
   if (tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
+  if (tab === "usuarios") cargarUsuarios().catch(e => mostrarAviso(e.message, true));
   if (tab === "serial" && pegado) log.scrollTop = log.scrollHeight;
 }
 
@@ -1515,15 +1576,16 @@ async function tick() {
     document.getElementById("cmd-hasta").value = data.hoy + "T23:00";
     fechasListas = true;
   }
+  if (data.rol) aplicarRol(data.rol, data.usuario);
   pintarConexion(data);
   if (data.panel) pintarVivo(data.panel);
-  if (data.config) {
+  if (data.config && !esMonitor()) {
     pintarBotones(data.config.comandos);
     pintarEditor(data.config.comandos);
     pintarSalidasEditor(data.config.salidas);
     llenarEtileno(data.config.etileno);
   }
-  pintarCola(data.cola);
+  if (!esMonitor()) pintarCola(data.cola);
   if (document.body.dataset.tab === "cmdhist") cargarComandos(true).catch(() => {});
   if (falloRed) { falloRed = false; }
 }
@@ -1930,7 +1992,69 @@ document.getElementById("abrir-cmd").addEventListener("click", () => {
   det.scrollIntoView({block: "nearest"});
 });
 
-tick().catch(e => mostrarAviso(e.message, true));
+function pintarUsuarios(lista) {
+  const caja = document.getElementById("usuarios-lista");
+  caja.replaceChildren();
+  (lista || []).forEach(item => {
+    const fila = document.createElement("div");
+    fila.className = "rango";
+    const nombre = document.createElement("strong");
+    nombre.textContent = item.usuario;
+    const rol = document.createElement("span");
+    rol.textContent = item.rol === "administrador" ? "Administrador" : "Monitoreo";
+    const quitar = document.createElement("button");
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => quitarUsuario(item.usuario));
+    fila.append(nombre, rol, quitar);
+    caja.appendChild(fila);
+  });
+}
+
+async function cargarUsuarios() {
+  const respuesta = await fetch("/usuarios");
+  if (sinSesion(respuesta)) return;
+  const data = await respuesta.json();
+  if (!respuesta.ok) throw new Error(data.detalle || "no se pudo leer los usuarios");
+  pintarUsuarios(data.usuarios);
+}
+
+async function quitarUsuario(usuario) {
+  if (!window.confirm("¿Quitar el usuario " + usuario + "?")) return;
+  const data = await postJson("/usuarios/quitar", {usuario});
+  pintarUsuarios(data.usuarios);
+  mostrarAviso(usuario + " salió del listado.", false);
+}
+
+document.getElementById("form-usuario").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const boton = ev.target.querySelector("button");
+  boton.disabled = true;
+  try {
+    const data = await postJson("/usuarios", {
+      usuario: document.getElementById("nuevo-usuario").value.trim(),
+      clave: document.getElementById("nuevo-clave").value,
+      rol: document.getElementById("nuevo-rol").value
+    });
+    document.getElementById("nuevo-usuario").value = "";
+    document.getElementById("nuevo-clave").value = "";
+    pintarUsuarios(data.usuarios);
+    mostrarAviso("Usuario creado.", false);
+  } catch (e) {
+    mostrarAviso(e.message, true);
+  } finally {
+    boton.disabled = false;
+  }
+});
+
+async function cargarSesion() {
+  const respuesta = await fetch("/sesion");
+  if (sinSesion(respuesta)) return;
+  const data = await respuesta.json();
+  aplicarRol(data.rol, data.usuario);
+}
+
+cargarSesion().then(() => tick()).catch(e => mostrarAviso(e.message, true));
 setInterval(() => { tick().catch(() => { if (!falloRed) { falloRed = true; mostrarAviso("Sin respuesta del panel", true); } }); }, 1000);
 setInterval(() => {
   if (document.body.dataset.tab === "hist") cargarLecturas(true).catch(() => {});
