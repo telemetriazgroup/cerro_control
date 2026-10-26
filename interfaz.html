@@ -145,7 +145,19 @@
     font-weight: 650;
     margin-bottom: 8px;
   }
-  .rejilla { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .rejilla, .reefer-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .tarjeta-r {
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  }
+  .tarjeta-r span { color: var(--muted); font-size: 0.78rem; }
+  .tarjeta-r strong { display: block; font-size: 1.35rem; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .tarjeta-r.ok strong { color: var(--ok); }
+  .tarjeta-r.caliente strong { color: var(--warn); }
+  .tarjeta-r.on { background: var(--green-dim); border-color: #1f6b45; }
+  .tarjeta-r.on strong { color: var(--green); }
+  .tarjeta-r.off { background: var(--red-dim); border-color: #6e3038; }
+  .tarjeta-r.off strong { color: var(--red); }
+  .tarjeta-r.na strong { color: var(--muted); font-size: 1.15rem; }
   label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 0.78rem; }
   input, select { border-radius: 8px; padding: 8px 10px; width: 100%; }
   .acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
@@ -175,6 +187,7 @@
   .meta { color: var(--muted); }
   .rango { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
   .rango label { min-width: 140px; }
+  .rango label.hora { min-width: 220px; }
   .analisis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .grafica { overflow: auto; }
   .grafica svg { width: 100%; height: auto; display: block; }
@@ -196,7 +209,7 @@
   .modal { width: min(480px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   .vacio { color: var(--muted); }
   @media (max-width: 980px) {
-    .marco, .zonas, .analisis, .valvulas, .salidas-grid, .hums, .rejilla { grid-template-columns: 1fr; }
+    .marco, .zonas, .analisis, .valvulas, .salidas-grid, .hums, .rejilla, .reefer-grid { grid-template-columns: 1fr; }
     .comps { grid-template-columns: 1fr; }
     header { align-items: flex-start; flex-direction: column; padding: 12px 12px 4px; }
     .tabs, .marco { padding-left: 10px; padding-right: 10px; }
@@ -244,6 +257,13 @@
 <div class="marco">
   <main>
     <div id="tab-vivo">
+      <section class="bloque">
+        <details class="plegado" id="det-temp">
+          <summary>Temperatura</summary>
+          <p class="leyenda">Reefer del mismo ciclo que el CO₂ y el O₂. Power: 0 apagado, 1 encendido. Set point, suministro, retorno, evaporador y condensador valen de -50 a 60 °C. Sensores 1 a 4 usan esa escala y el 0 queda en NA. Humedad y SP humedad, de 50 a 99 %. CO₂, O₂ y SP CO₂, de 0 a 24.9 %. Fuera de rango se muestra NA.</p>
+          <div class="reefer-grid" id="reefer-cards"></div>
+        </details>
+      </section>
       <section class="bloque">
         <h2>Ciclo</h2>
         <div class="pasos" id="pasos">
@@ -363,11 +383,21 @@
         <h2>Histórico O₂ / CO₂</h2>
         <p class="leyenda">Cada STARCOOL_CONSULTA queda guardada aquí. El promedio ignora los reinicios 0 y 25.5. La desviación se calcula contra los objetivos de ahora.</p>
         <form id="form-hist" class="rango">
-          <label>Desde<input type="date" id="desde"></label>
-          <label>Hasta<input type="date" id="hasta"></label>
+          <label class="hora">Desde<input type="datetime-local" id="desde" step="3600"></label>
+          <label class="hora">Hasta<input type="datetime-local" id="hasta" step="3600"></label>
           <button class="primario" type="submit">Analizar</button>
+          <button type="button" id="bajar-xlsx">Excel</button>
+          <button type="button" id="bajar-pdf">PDF</button>
         </form>
+        <p class="leyenda">La hora elegida entra completa. Para ver un solo tramo, ponga la misma hora en desde y hasta.</p>
         <p class="leyenda" id="hist-aviso"></p>
+        <h2>Archivo del serial</h2>
+        <p class="leyenda">Sube un txt con nombre cerro_dia_mes_año.txt. También vale cerro_dia_mes_año_extra.txt. El CO₂, el O₂ y el reefer de cada ciclo quedan en la hora de STARCOOL_CONSULTA. Si ese día ya tiene lecturas, hay que confirmar el reemplazo.</p>
+        <div class="rango">
+          <label class="hora">Archivo<input type="file" id="archivo-log" accept=".txt,text/plain"></label>
+          <button type="button" id="subir-log" class="primario">Subir e incorporar</button>
+        </div>
+        <div id="archivos-lista"></div>
       </section>
       <div class="analisis" id="analisis"></div>
       <section class="bloque">
@@ -385,22 +415,34 @@
         <div class="grafica" id="graf-mix"></div>
         <p class="leyenda" id="lectura-mix"></p>
         <p class="leyenda" id="leyenda-graf"></p>
+        <h2>Temperatura del reefer</h2>
+        <p class="leyenda">La misma hora que el CO₂ y el O₂ de ese ciclo. El reefer llega unos segundos antes y se guarda junto con la consulta.</p>
+        <div class="rango" id="temp-graf">
+          <label><input type="checkbox" data-temp="set_point" checked> Set point</label>
+          <label><input type="checkbox" data-temp="suministro" checked> Suministro</label>
+          <label><input type="checkbox" data-temp="retorno" checked> Retorno</label>
+          <label><input type="checkbox" data-temp="evaporador" checked> Evaporador</label>
+          <label><input type="checkbox" data-temp="condensador" checked> Condensador</label>
+        </div>
+        <div class="grafica" id="graf-temp"></div>
+        <p class="leyenda" id="leyenda-temp"></p>
         <h2>Evolución por hora</h2>
         <p class="leyenda">De hora en hora, con las curvas que están activas. El 0 y el 25.5 no entran: se usa el último valor válido.</p>
         <div id="horas-graf"></div>
       </section>
       <section class="bloque">
-        <h2>Últimas lecturas</h2>
+        <h2>Lecturas del ciclo</h2>
+        <p class="leyenda">Cada fila junta el CO₂ y el O₂ con el reefer de ese ciclo, a la hora de la consulta.</p>
         <div class="tabla" id="tabla"></div>
       </section>
     </div>
     <div id="tab-cmdhist" hidden>
       <section class="bloque">
         <h2>Historial de comandos</h2>
-        <p class="leyenda">Starcool, inyector y válvulas. Serial es lo que apareció en la línea del equipo. Interfaz es lo que salió desde este panel. El tiempo compara cada comando con el anterior del mismo serial, y la respuesta es lo que llegó después.</p>
+        <p class="leyenda">Starcool, inyector y válvulas. Serial es lo que apareció en la línea del equipo. Interfaz es lo que salió desde este panel. El ciclo fijo (QUEST, SALIDAS, PLATAFORMA, ESTADO? y el bitmap) no se lista. El tiempo compara cada comando con el anterior del mismo serial, y la respuesta es lo que llegó después.</p>
         <form id="form-cmdhist" class="rango">
-          <label>Desde<input type="date" id="cmd-desde"></label>
-          <label>Hasta<input type="date" id="cmd-hasta"></label>
+          <label class="hora">Desde<input type="datetime-local" id="cmd-desde" step="3600"></label>
+          <label class="hora">Hasta<input type="datetime-local" id="cmd-hasta" step="3600"></label>
           <label>Origen
             <select id="cmd-origen">
               <option value="">Todos</option>
@@ -418,6 +460,7 @@
           </label>
           <button class="primario" type="submit">Ver</button>
         </form>
+        <p class="leyenda">La hora elegida entra completa. Para ver un solo tramo, ponga la misma hora en desde y hasta.</p>
         <p class="leyenda" id="cmd-aviso"></p>
         <p class="leyenda" id="cmd-compara">Elija dos filas para ver cuánto tiempo pasó entre esos comandos.</p>
         <div class="tabla" id="cmd-tabla"></div>
@@ -595,6 +638,7 @@ function pintarVivo(panel) {
   const cons = panel.consignas_equipo;
   setTexto("obj-equipo", cons && cons.co2 ? "El equipo reporta CO₂ " + [1,2,3].map(z => fmt(cons.co2[z])).join(" / ") + " · O₂ " + [1,2,3].map(z => fmt(cons.o2[z])).join(" / ") + (cons.humedad ? " · humedad " + [1,2,3].map(z => fmt(cons.humedad[z])).join(" / ") : "") : "Aún no llega la línea SERVIDOR.");
   document.getElementById("vacio").hidden = !panel.sin_datos;
+  pintarReefer(panel.reefer);
   document.querySelectorAll(".paso").forEach(el => el.classList.toggle("ahora", el.dataset.paso === panel.paso));
   setTexto("paso-texto", (PASO_TEXTO[panel.paso] || "Esperando ciclo") + (panel.segundos != null ? " · " + hace(panel.segundos) : "") + " · " + (panel.ultimo_texto || ""));
   (panel.por_zona || []).forEach(z => {
@@ -1062,11 +1106,13 @@ function dibujar(puntos, objetivos, porHora) {
   if (!puntos || !puntos.length) {
     host.textContent = "No hay lecturas en este rango.";
     pintarHoras(porHora, series);
+    dibujarTemp(puntos);
     return;
   }
   if (!series.length) {
     host.textContent = "Hace falta al menos un gas y una zona.";
     pintarHoras(porHora, series);
+    dibujarTemp(puntos);
     return;
   }
   const width = 720, height = 280, padL = 46, padR = 16, padT = 18, padB = 28;
@@ -1075,7 +1121,7 @@ function dibujar(puntos, objetivos, porHora) {
   const valorDe = (p, s) => p[s.gas][s.zona - 1];
   puntos.forEach(p => series.forEach(s => toma(valorDe(p, s))));
   series.forEach(s => toma(objetivos && objetivos[s.gas] && objetivos[s.gas][String(s.zona)]));
-  if (!Number.isFinite(pico)) { host.textContent = "No hay valores válidos para graficar."; pintarHoras(porHora, series); return; }
+  if (!Number.isFinite(pico)) { host.textContent = "No hay valores válidos para graficar."; pintarHoras(porHora, series); dibujarTemp(puntos); return; }
   const min = 0;
   const max = techoEscala(pico);
   const t0 = Date.parse(puntos[0].t), t1 = Date.parse(puntos[puntos.length - 1].t);
@@ -1205,6 +1251,7 @@ function dibujar(puntos, objetivos, porHora) {
       return "Z" + s.zona + " " + gas + " " + fmt(valorDe(p, s)) + " %";
     }).join("  ");
   });
+  dibujarTemp(puntos);
 }
 function fraseHora(celda, gas, zona) {
   const nombre = (gas === "co2" ? "CO₂" : "O₂") + " zona " + zona;
@@ -1277,13 +1324,34 @@ function pintarAnalisis(data) {
     caja.appendChild(card);
   }));
 }
+function pintarReefer(campos) {
+  const caja = document.getElementById("reefer-cards");
+  const firma = JSON.stringify(campos || []);
+  if (caja.dataset.firma === firma) return;
+  caja.dataset.firma = firma;
+  caja.replaceChildren();
+  (campos || []).forEach(campo => {
+    const card = document.createElement("article");
+    card.className = "tarjeta-r " + (campo.clase || "na");
+    const nombre = document.createElement("span");
+    nombre.textContent = campo.nombre || "";
+    const valor = document.createElement("strong");
+    valor.textContent = campo.texto || "NA";
+    card.appendChild(nombre);
+    card.appendChild(valor);
+    caja.appendChild(card);
+  });
+  if (!campos || !campos.length) caja.textContent = "Aún no llega REEFER_QUEST.";
+}
 function pintarTabla(filas) {
   const caja = document.getElementById("tabla");
   caja.replaceChildren();
   if (!filas || !filas.length) { caja.textContent = "Sin filas en el rango."; return; }
   const table = document.createElement("table");
   const head = document.createElement("tr");
-  ["Fecha", "Z1 CO₂", "Z1 O₂", "Z2 CO₂", "Z2 O₂", "Z3 CO₂", "Z3 O₂"].forEach(t => {
+  const titulos = ["Fecha", "Z1 CO₂", "Z1 O₂", "Z2 CO₂", "Z2 O₂", "Z3 CO₂", "Z3 O₂"];
+  (filas[0].reefer || []).forEach(c => titulos.push(c.nombre));
+  titulos.forEach(t => {
     const th = document.createElement("th"); th.textContent = t; head.appendChild(th);
   });
   table.appendChild(head);
@@ -1299,9 +1367,99 @@ function pintarTabla(filas) {
       if (g.reinicio) td.className = "marca-r";
       tr.appendChild(td);
     }));
+    (fila.reefer || []).forEach(c => {
+      const td = document.createElement("td");
+      td.textContent = c.texto || "NA";
+      if (c.texto === "NA") td.className = "marca-r";
+      tr.appendChild(td);
+    });
     table.appendChild(tr);
   });
   caja.appendChild(table);
+}
+const NOMBRE_TEMP = {set_point: "Set point", suministro: "Suministro", retorno: "Retorno", evaporador: "Evaporador", condensador: "Condensador"};
+const COLOR_TEMP = {set_point: "#8eb6ff", suministro: "#3ddc97", retorno: "#f0c14d", evaporador: "#7ad0ff", condensador: "#ff9f43"};
+function dibujarTemp(puntos) {
+  const host = document.getElementById("graf-temp");
+  const leyenda = document.getElementById("leyenda-temp");
+  if (!host) return;
+  host.replaceChildren();
+  if (leyenda) leyenda.textContent = "";
+  const claves = [...document.querySelectorAll("#temp-graf input:checked")].map(el => el.dataset.temp);
+  if (!puntos || !puntos.length || !claves.length) {
+    host.textContent = claves.length ? "No hay lecturas en este rango." : "Elija al menos una temperatura.";
+    return;
+  }
+  const width = 720, height = 240, padL = 46, padR = 16, padT = 16, padB = 28;
+  let lo = Infinity, hi = -Infinity;
+  puntos.forEach(p => claves.forEach(clave => {
+    const v = p.temp && p.temp[clave];
+    if (v == null || Number.isNaN(Number(v))) return;
+    lo = Math.min(lo, Number(v));
+    hi = Math.max(hi, Number(v));
+  }));
+  if (!Number.isFinite(lo)) { host.textContent = "No hay temperaturas válidas en este rango."; return; }
+  if (hi - lo < 4) { lo -= 2; hi += 2; }
+  else { lo = Math.floor(lo - 1); hi = Math.ceil(hi + 1); }
+  const min = lo, max = hi;
+  const t0 = Date.parse(puntos[0].t), t1 = Date.parse(puntos[puntos.length - 1].t);
+  const span = Math.max(1, t1 - t0);
+  const xDe = t => padL + ((Date.parse(t) - t0) / span) * (width - padL - padR);
+  const yDe = v => padT + (1 - (v - min) / (max - min)) * (height - padT - padB);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+  [min, (min + max) / 2, max].forEach(valor => {
+    const y = yDe(valor);
+    svg.appendChild(lineaSvg(padL, y, width - padR, y, "#2a3a58", ""));
+    const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    texto.setAttribute("x", "4"); texto.setAttribute("y", String(y + 4));
+    texto.setAttribute("fill", "#8ea0c4"); texto.setAttribute("font-size", "11");
+    texto.textContent = fmt(valor);
+    svg.appendChild(texto);
+  });
+  const mismoDia = String(puntos[0].t).slice(0, 10) === String(puntos[puntos.length - 1].t).slice(0, 10);
+  const etiqueta = iso => {
+    const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+    return m ? (mismoDia ? m[4] : m[3] + "/" + m[2] + " " + m[4]) : "";
+  };
+  [0, 1].forEach(f => {
+    const texto = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    texto.setAttribute("x", String(f === 0 ? padL : width - padR));
+    texto.setAttribute("y", String(height - 8));
+    texto.setAttribute("text-anchor", f === 0 ? "start" : "end");
+    texto.setAttribute("fill", "#8ea0c4"); texto.setAttribute("font-size", "11");
+    texto.textContent = etiqueta(f === 0 ? puntos[0].t : puntos[puntos.length - 1].t);
+    svg.appendChild(texto);
+  });
+  claves.forEach(clave => {
+    const color = COLOR_TEMP[clave] || "#d7deee";
+    let tramo = [];
+    const volcar = () => {
+      if (tramo.length >= 2) {
+        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        poly.setAttribute("points", tramo.join(" "));
+        poly.setAttribute("fill", "none");
+        poly.setAttribute("stroke", color);
+        poly.setAttribute("stroke-width", "2");
+        svg.appendChild(poly);
+      } else if (tramo.length === 1) {
+        const [cx, cy] = tramo[0].split(",");
+        const cir = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        cir.setAttribute("cx", cx); cir.setAttribute("cy", cy); cir.setAttribute("r", "3.5");
+        cir.setAttribute("fill", color);
+        svg.appendChild(cir);
+      }
+      tramo = [];
+    };
+    puntos.forEach(p => {
+      const valor = p.temp && p.temp[clave];
+      if (valor == null) volcar();
+      else tramo.push(xDe(p.t).toFixed(1) + "," + yDe(Number(valor)).toFixed(1));
+    });
+    volcar();
+  });
+  if (leyenda) leyenda.textContent = "Escala " + fmt(min) + " a " + fmt(max) + " °C. " + claves.map(c => NOMBRE_TEMP[c] || c).join(" · ");
+  host.appendChild(svg);
 }
 async function cargarLecturas(silencio) {
   const desdeF = document.getElementById("desde").value;
@@ -1314,7 +1472,9 @@ async function cargarLecturas(silencio) {
   const data = await respuesta.json();
   if (!respuesta.ok) throw new Error(data.detalle || "No se pudo leer el histórico");
   ultimaHist = data;
-  const avisoHist = data.aviso || (data.muestreada ? "La gráfica muestra " + data.grafica + " de " + data.total + " lecturas. El análisis usa todas." : data.total + " lecturas.");
+  const nLect = data.total || 0;
+  const textoLect = nLect === 1 ? "1 lectura." : nLect + " lecturas.";
+  const avisoHist = data.aviso || (data.muestreada ? "La gráfica muestra " + data.grafica + " de " + nLect + " lecturas. El análisis usa todas." : textoLect);
   setTexto("hist-aviso", avisoHist);
   pintarAnalisis(data);
   dibujar(data.puntos, data.objetivos, data.por_hora);
@@ -1332,7 +1492,10 @@ function ir(tab) {
   document.getElementById("tab-hist").hidden = tab !== "hist";
   document.getElementById("tab-serial").hidden = tab !== "serial";
   document.getElementById("tab-cmdhist").hidden = tab !== "cmdhist";
-  if (tab === "hist") cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
+  if (tab === "hist") {
+    cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
+    listarArchivos().catch(() => {});
+  }
   if (tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
   if (tab === "serial" && pegado) log.scrollTop = log.scrollHeight;
 }
@@ -1346,10 +1509,10 @@ async function tick() {
   if (typeof data.siguiente === "number") desde = data.siguiente;
   setTexto("reloj", (data.hora || "") + " · America/Lima");
   if (!fechasListas && data.hoy) {
-    document.getElementById("desde").value = data.hoy;
-    document.getElementById("hasta").value = data.hoy;
-    document.getElementById("cmd-desde").value = data.hoy;
-    document.getElementById("cmd-hasta").value = data.hoy;
+    document.getElementById("desde").value = data.hoy + "T00:00";
+    document.getElementById("hasta").value = data.hoy + "T23:00";
+    document.getElementById("cmd-desde").value = data.hoy + "T00:00";
+    document.getElementById("cmd-hasta").value = data.hoy + "T23:00";
     fechasListas = true;
   }
   pintarConexion(data);
@@ -1607,6 +1770,124 @@ document.getElementById("cmd-tabla").addEventListener("click", (ev) => {
 document.getElementById("form-hist").addEventListener("submit", (ev) => {
   ev.preventDefault();
   cargarLecturas(false).catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("temp-graf").addEventListener("change", () => {
+  if (ultimaHist) dibujarTemp(ultimaHist.puntos);
+});
+async function descargarReporte(formato) {
+  const desdeF = document.getElementById("desde").value;
+  const hastaF = document.getElementById("hasta").value;
+  if (!desdeF || !hastaF) return;
+  const q = new URLSearchParams({desde: desdeF, hasta: hastaF, formato});
+  if (equipoElegido) q.set("ip", equipoElegido);
+  const respuesta = await fetch("/reporte?" + q.toString());
+  if (sinSesion(respuesta)) return;
+  if (!respuesta.ok) {
+    const data = await respuesta.json().catch(() => ({}));
+    throw new Error(data.detalle || "No se pudo armar el reporte");
+  }
+  const blob = await respuesta.blob();
+  const nombre = (respuesta.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = nombre ? nombre[1] : ("cerro." + formato);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById("bajar-xlsx").addEventListener("click", () => {
+  descargarReporte("xlsx").catch(e => mostrarAviso(e.message, true));
+});
+document.getElementById("bajar-pdf").addEventListener("click", () => {
+  descargarReporte("pdf").catch(e => mostrarAviso(e.message, true));
+});
+function nLecturas(n) {
+  return n + (Number(n) === 1 ? " lectura" : " lecturas");
+}
+function enfocarDia(fecha) {
+  if (!fecha) return;
+  document.getElementById("desde").value = fecha + "T00:00";
+  document.getElementById("hasta").value = fecha + "T23:00";
+}
+function avisoArchivo(data) {
+  const base = data.fecha_display + ": " + nLecturas(data.lecturas_archivo) + ", " + data.con_reefer + " con reefer.";
+  if (data.reemplazo) return "Se reemplazó el histórico del " + base;
+  if (data.incorporado) return "Quedó en el histórico el " + base;
+  return "El archivo quedó guardado. El histórico del " + data.fecha_display + " no se tocó.";
+}
+async function incorporarGuardado(nombre, reemplazar) {
+  const data = await postJson("/archivos/incorporar", {nombre, reemplazar: !!reemplazar});
+  if (data.existe && !data.incorporado) {
+    const seguir = confirm("El " + data.fecha_display + " ya tiene " + nLecturas(data.lecturas_actuales) + ". ¿Reemplazarlas por " + nLecturas(data.lecturas_archivo) + " del archivo?");
+    if (!seguir) {
+      mostrarAviso("El histórico del " + data.fecha_display + " se dejó como estaba.", false);
+      return data;
+    }
+    return incorporarGuardado(nombre, true);
+  }
+  mostrarAviso(avisoArchivo(data), false);
+  if (data.incorporado) enfocarDia(data.fecha);
+  await cargarLecturas(true);
+  await listarArchivos();
+  return data;
+}
+async function listarArchivos() {
+  const caja = document.getElementById("archivos-lista");
+  if (!caja) return;
+  const respuesta = await fetch("/archivos");
+  if (sinSesion(respuesta)) return;
+  const data = await respuesta.json();
+  caja.replaceChildren();
+  (data.archivos || []).forEach(archivo => {
+    const fila = document.createElement("p");
+    fila.className = "leyenda";
+    const estado = archivo.lecturas_actuales
+      ? " · el día ya tiene " + nLecturas(archivo.lecturas_actuales)
+      : " · el día todavía no está en el histórico";
+    fila.textContent = archivo.nombre + " · " + archivo.fecha_display + estado + " ";
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.textContent = "Incorporar";
+    boton.addEventListener("click", () => {
+      incorporarGuardado(archivo.nombre, false).catch(e => mostrarAviso(e.message, true));
+    });
+    fila.appendChild(boton);
+    caja.appendChild(fila);
+  });
+}
+document.getElementById("subir-log").addEventListener("click", async () => {
+  const input = document.getElementById("archivo-log");
+  const archivo = input.files && input.files[0];
+  if (!archivo) { mostrarAviso("Elija un archivo .txt.", true); return; }
+  const boton = document.getElementById("subir-log");
+  boton.disabled = true;
+  try {
+    const respuesta = await fetch("/archivos?nombre=" + encodeURIComponent(archivo.name), {
+      method: "POST",
+      headers: {"Content-Type": "text/plain; charset=utf-8"},
+      body: archivo
+    });
+    if (sinSesion(respuesta)) return;
+    const data = await respuesta.json();
+    if (!respuesta.ok) throw new Error(data.detalle || "No se pudo subir el archivo");
+    if (data.existe && !data.incorporado) {
+      const seguir = confirm("El " + data.fecha_display + " ya tiene " + nLecturas(data.lecturas_actuales) + ". ¿Reemplazarlas por " + nLecturas(data.lecturas_archivo) + " del archivo?");
+      if (!seguir) {
+        mostrarAviso("El archivo quedó en la carpeta. El histórico del " + data.fecha_display + " no se tocó.", false);
+        await listarArchivos();
+        return;
+      }
+      await incorporarGuardado(data.nombre, true);
+      return;
+    }
+    mostrarAviso(avisoArchivo(data), false);
+    if (data.incorporado) enfocarDia(data.fecha);
+    await cargarLecturas(true);
+    await listarArchivos();
+  } catch (e) {
+    mostrarAviso(e.message, true);
+  } finally {
+    boton.disabled = false;
+  }
 });
 document.getElementById("zonas-graf").addEventListener("change", () => {
   if (ultimaHist) dibujar(ultimaHist.puntos, ultimaHist.objetivos, ultimaHist.por_hora);

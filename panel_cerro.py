@@ -19,8 +19,24 @@ except Exception:
     ZONA = datetime.timezone(datetime.timedelta(hours=-5), name="America/Lima")
 
 CONTINUACION = re.compile(r"^[0-9,.\-]")
+NOMBRE_LOG = re.compile(
+    r"^(?:cerro|cerr)_(\d{2})_(\d{2})_(\d{4})(?:_extra)?\.txt$",
+    re.IGNORECASE,
+)
+MARCA_LOG = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s?(.*)$")
 BITMAP = re.compile(r"INYECTOR:([01]{8,})(?:,(.*))?$")
 ACKS = {"STARCOOL_OK", "INYECTOR_OK", "REEFER_CAMBIO_OK"}
+# Consultas que el equipo repite en cada ciclo. No son comandos.
+CICLO_REGULAR = {
+    "STARCOOL:QUEST",
+    "STARCOOL:SALIDAS",
+    "STARCOOL:PLATAFORMA",
+    "INYECTOR:ESTADO?",
+    "RIPENER:QUEST",
+    "RIPENER:PLATAFORMA",
+    "RIPENER:ETILENO",
+    "REEFER:QUEST",
+}
 LETRAS = "ABCDEFGHIJKLMNOP"
 # índice del bitmap → grupo y nombre. 0 = encendido, 1 = apagado.
 USOS = {
@@ -74,6 +90,53 @@ SEMILLA = [
     ("Reefer", "Trama write 0, 3.5, 100", "REEFER:Trama_Write(0,3.5,100)", "El equipo responde REEFER_CAMBIO_OK."),
     ("Reefer", "Trama write 10, 0, 1", "REEFER:Trama_Write(10,0,1)", "El equipo responde REEFER_CAMBIO_OK."),
 ]
+
+
+def _es_ciclo(texto):
+    t = str(texto or "").strip()
+    if t in CICLO_REGULAR or t.startswith("INYECTOR:ESTADO"):
+        return True
+    return bool(BITMAP.match(t))
+
+
+def _marca_busqueda(valor):
+    """Inicio y fin exclusivo de un día (AAAA-MM-DD) o de una hora (AAAA-MM-DDTHH:MM)."""
+    s = str(valor or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        dia = datetime.date.fromisoformat(s)
+        ini = datetime.datetime.combine(dia, datetime.time.min, tzinfo=ZONA)
+        return ini, ini + datetime.timedelta(days=1)
+    dt = datetime.datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZONA)
+    else:
+        dt = dt.astimezone(ZONA)
+    dt = dt.replace(microsecond=0)
+    if dt.minute == 0 and dt.second == 0:
+        return dt, dt + datetime.timedelta(hours=1)
+    if dt.second == 0:
+        return dt, dt + datetime.timedelta(minutes=1)
+    return dt, dt + datetime.timedelta(seconds=1)
+
+
+def _rango_busqueda(desde_s, hasta_s):
+    try:
+        ini_a, fin_a = _marca_busqueda(desde_s)
+        ini_b, fin_b = _marca_busqueda(hasta_s)
+    except (TypeError, ValueError):
+        raise PanelError(400, "la hora debe ir como AAAA-MM-DD o AAAA-MM-DDTHH:MM")
+    inicio = min(ini_a, ini_b)
+    fin = max(fin_a, fin_b)
+    aviso = None
+    if fin - inicio > datetime.timedelta(days=62):
+        inicio = fin - datetime.timedelta(days=62)
+        aviso = "El rango se ajustó a los últimos 62 días."
+    return inicio, fin, aviso
+
+
+def _dentro(marca, inicio, fin):
+    dt = _parse_iso(marca)
+    return dt is not None and inicio <= dt < fin
 
 
 def _familia_comando(texto):
@@ -176,6 +239,83 @@ def es_reinicio(valor):
     if n is None:
         return False
     return abs(n) < 1e-9 or abs(n - 25.5) < 1e-4
+
+
+# REEFER_QUEST, en este orden. El 0 de un sensor suelto es “sin sensor”.
+CAMPOS_REEFER = (
+    ("power", "Power", "power", ""),
+    ("set_point", "Set point", "temp", "°C"),
+    ("suministro", "Suministro", "temp", "°C"),
+    ("retorno", "Retorno", "temp", "°C"),
+    ("evaporador", "Evaporador", "temp", "°C"),
+    ("condensador", "Condensador", "temp", "°C"),
+    ("sensor_1", "Sensor 1", "sensor", "°C"),
+    ("sensor_2", "Sensor 2", "sensor", "°C"),
+    ("sensor_3", "Sensor 3", "sensor", "°C"),
+    ("sensor_4", "Sensor 4", "sensor", "°C"),
+    ("humedad", "Humedad", "hum", "%"),
+    ("ventilacion", "Ventilación", "cfm", "CFM"),
+    ("co2", "CO₂ sensor", "gas", "%"),
+    ("o2", "O₂ sensor", "gas", "%"),
+    ("sp_humedad", "SP humedad", "hum", "%"),
+    ("sp_co2", "SP CO₂", "gas", "%"),
+)
+TEMPS_REEFER = ("set_point", "suministro", "retorno", "evaporador", "condensador")
+
+
+def _texto_reefer(numero, unidad):
+    return f"{numero:.1f} {unidad}".strip()
+
+
+def _campo_reefer(tipo, crudo, unidad):
+    n = _num(crudo)
+    if tipo == "power":
+        if n is None:
+            return None, "NA", "na"
+        entero = int(round(n))
+        if entero == 1:
+            return 1, "Encendido", "on"
+        if entero == 0:
+            return 0, "Apagado", "off"
+        return None, "NA", "na"
+    if tipo == "cfm":
+        if n is None:
+            return None, "NA", "na"
+        return n, _texto_reefer(n, unidad), "ok"
+    if n is None:
+        return None, "NA", "na"
+    if tipo == "temp" and -50 <= n <= 60:
+        clase = "caliente" if unidad == "°C" and n >= 35 else "ok"
+        return n, _texto_reefer(n, unidad), clase
+    if tipo == "sensor" and n != 0 and -50 <= n <= 60:
+        return n, _texto_reefer(n, unidad), "ok"
+    if tipo == "hum" and 50 <= n <= 99:
+        return n, _texto_reefer(n, unidad), "ok"
+    if tipo == "gas" and 0 <= n <= 24.9:
+        return n, _texto_reefer(n, unidad), "ok"
+    return None, "NA", "na"
+
+
+def interpretar_reefer(nums):
+    nums = list(nums or [])
+    salida = []
+    for i, (clave, nombre, tipo, unidad) in enumerate(CAMPOS_REEFER):
+        crudo = nums[i] if i < len(nums) else None
+        valor, texto, clase = _campo_reefer(tipo, crudo, unidad)
+        if clave == "condensador" and valor is not None and valor >= 35:
+            clase = "caliente"
+        elif clase == "caliente":
+            clase = "ok"
+        salida.append({
+            "clave": clave,
+            "nombre": nombre,
+            "unidad": unidad,
+            "crudo": _num(crudo),
+            "valor": valor,
+            "texto": texto,
+            "clase": clase,
+        })
+    return salida
 
 
 def partir_csv(texto):
@@ -502,19 +642,10 @@ class Panel:
             return self._observar_cmd(str(ip), texto, "interfaz" if flujo == "out" else "serial", cuando)
 
     def historial_comandos(self, desde_s, hasta_s, ip=None, origen=None, familia=None):
-        try:
-            desde = datetime.date.fromisoformat(str(desde_s))
-            hasta = datetime.date.fromisoformat(str(hasta_s))
-        except (TypeError, ValueError):
-            raise PanelError(400, "las fechas deben ir como AAAA-MM-DD")
-        if hasta < desde:
-            desde, hasta = hasta, desde
-        aviso = None
-        if (hasta - desde).days > 62:
-            desde = hasta - datetime.timedelta(days=62)
-            aviso = "El rango se ajustó a los últimos 62 días."
+        inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
         with self._lock:
-            filas = self._leer_comandos(desde, hasta)
+            filas = self._leer_comandos(inicio.date(), (fin - datetime.timedelta(seconds=1)).date())
+        filas = [x for x in filas if not _es_ciclo(x.get("trama")) and _dentro(x.get("t"), inicio, fin)]
         if ip:
             filas = [x for x in filas if x.get("ip") == ip]
         if origen in ("serial", "interfaz"):
@@ -524,25 +655,15 @@ class Panel:
         pub = [_cmd_pub(x) for x in filas]
         pub.sort(key=lambda x: x.get("t") or "", reverse=True)
         return {
-            "desde": desde.isoformat(),
-            "hasta": hasta.isoformat(),
+            "desde": inicio.isoformat(timespec="minutes"),
+            "hasta": (fin - datetime.timedelta(seconds=1)).isoformat(timespec="seconds"),
             "aviso": aviso,
             "total": len(pub),
             "comandos": pub[:500],
         }
 
-    def lecturas(self, desde_s, hasta_s, ip=None):
-        try:
-            desde = datetime.date.fromisoformat(str(desde_s))
-            hasta = datetime.date.fromisoformat(str(hasta_s))
-        except (TypeError, ValueError):
-            raise PanelError(400, "las fechas deben ir como AAAA-MM-DD")
-        if hasta < desde:
-            desde, hasta = hasta, desde
-        aviso = None
-        if (hasta - desde).days > 62:
-            desde = hasta - datetime.timedelta(days=62)
-            aviso = "El rango se ajustó a los últimos 62 días."
+    def lecturas(self, desde_s, hasta_s, ip=None, completo=False):
+        inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
         with self._lock:
             objetivos, origen = self._objetivos_de(self._elegir(ip))
             objetivos = json.loads(json.dumps(objetivos))
@@ -555,8 +676,9 @@ class Panel:
         horas_orden = []
         total = 0
         paso = 1
-        dia = desde
-        while dia <= hasta:
+        dia = inicio.date()
+        ultimo_dia = (fin - datetime.timedelta(seconds=1)).date()
+        while dia <= ultimo_dia:
             ruta = os.path.join(self.dir_lecturas, dia.isoformat() + ".jsonl")
             dia += datetime.timedelta(days=1)
             if not os.path.exists(ruta):
@@ -570,7 +692,10 @@ class Panel:
                     rec = _linea_lectura(linea)
                     if rec is None:
                         continue
-                    if ip and rec.get("ip") != ip:
+                    origen_ip = rec.get("ip")
+                    if ip and origen_ip not in (ip, "archivo"):
+                        continue
+                    if not _dentro(rec.get("t"), inicio, fin):
                         continue
                     vals = rec.get("v") or []
                     celdas = []
@@ -581,19 +706,21 @@ class Panel:
                         _sumar_stat(stats[i], celda, _obj_indice(objetivos, i))
                     _sumar_hora(horas_map, horas_orden, rec.get("t"), celdas)
                     total += 1
+                    campos_r = interpretar_reefer(rec.get("r"))
                     if (total - 1) % paso == 0:
                         puntos.append({
                             "t": rec["t"],
                             "co2": [_num(celdas[i]["valor"]) for i in range(3)],
                             "o2": [_num(celdas[i]["valor"]) for i in range(3, 6)],
+                            "temp": {c["clave"]: c["valor"] for c in campos_r if c["clave"] in TEMPS_REEFER},
                         })
                     if len(puntos) > 2000:
                         puntos = puntos[::2]
                         paso *= 2
-                    tabla.append(_fila_tabla(rec, celdas, objetivos))
+                    tabla.append(_fila_tabla(rec, celdas, objetivos, campos_r))
         return {
-            "desde": desde.isoformat(),
-            "hasta": hasta.isoformat(),
+            "desde": inicio.isoformat(timespec="minutes"),
+            "hasta": (fin - datetime.timedelta(seconds=1)).isoformat(timespec="seconds"),
             "ip": ip,
             "aviso": aviso,
             "total": total,
@@ -602,10 +729,65 @@ class Panel:
             "objetivos": objetivos,
             "objetivos_origen": origen,
             "puntos": puntos,
-            "tabla": list(reversed(tabla[-200:])),
+            "tabla": list(reversed(tabla if completo else tabla[-200:])),
             "analisis": _analisis_pub(stats),
             "por_hora": [_cerrar_hora(clave, horas_map[clave]) for clave in horas_orden],
         }
+
+    def reporte(self, desde_s, hasta_s, ip, formato):
+        formato = (formato or "").lower()
+        if formato not in ("xlsx", "pdf"):
+            raise PanelError(400, "el formato es xlsx o pdf")
+        data = self.lecturas(desde_s, hasta_s, ip, completo=True)
+        filas = list(reversed(data["tabla"]))
+        nombre = f"cerro_{data['desde'][:13].replace(':', '')}_{data['hasta'][:13].replace(':', '')}.{formato}"
+        if formato == "xlsx":
+            cuerpo = _xlsx_reporte(filas)
+            tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            cuerpo = _pdf_reporte(filas, data.get("desde"), data.get("hasta"))
+            tipo = "application/pdf"
+        return cuerpo, tipo, nombre
+
+    def lecturas_del_dia(self, fecha):
+        ruta = os.path.join(self.dir_lecturas, fecha.isoformat() + ".jsonl")
+        if not os.path.exists(ruta):
+            return 0
+        total = 0
+        try:
+            with open(ruta, encoding="utf-8") as fh:
+                for linea in fh:
+                    if linea.strip():
+                        total += 1
+        except OSError:
+            return 0
+        return total
+
+    def incorporar_archivo(self, ruta, reemplazar=False):
+        """Pasa un txt del serial al histórico. Si el día ya tiene lecturas, no las pisa."""
+        with self._lock:
+            info = analizar_captura(ruta)
+            filas = info.pop("_filas")
+            fecha = datetime.date.fromisoformat(info["fecha"])
+            actuales = self.lecturas_del_dia(fecha)
+            info["lecturas_actuales"] = actuales
+            info["existe"] = actuales > 0
+            if info["existe"] and not reemplazar:
+                info["ok"] = True
+                info["incorporado"] = False
+                return info
+            destino = os.path.join(self.dir_lecturas, fecha.isoformat() + ".jsonl")
+            tmp = destino + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                for rec in filas:
+                    fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, destino)
+            info["ok"] = True
+            info["incorporado"] = True
+            info["reemplazo"] = actuales > 0
+            return info
 
     def _consumir(self, est, texto, cuando):
         est["ultima"] = cuando
@@ -615,10 +797,10 @@ class Panel:
             est["paso"] = paso
         if est.get("bloque") in ("ripener", "reefer") and texto and CONTINUACION.match(texto):
             est[est["bloque"] + "_partes"].append(texto)
-            self._refrescar_bloque(est)
+            self._refrescar_bloque(est, cuando)
             return
         if est.get("bloque"):
-            self._refrescar_bloque(est)
+            self._refrescar_bloque(est, cuando)
             est["bloque"] = None
         if texto in ACKS:
             est["ultimo_ack"] = texto
@@ -667,7 +849,7 @@ class Panel:
             resto = texto[8:]
             if resto:
                 est["ripener_partes"].append(resto)
-            self._refrescar_bloque(est)
+            self._refrescar_bloque(est, cuando)
             return
         if texto.startswith("REEFER_QUEST:"):
             est["bloque"] = "reefer"
@@ -675,13 +857,15 @@ class Panel:
             resto = texto.split(":", 1)[1]
             if resto:
                 est["reefer_partes"].append(resto)
-            self._refrescar_bloque(est)
+            self._refrescar_bloque(est, cuando)
 
-    def _refrescar_bloque(self, est):
+    def _refrescar_bloque(self, est, cuando=None):
         if est.get("bloque") == "ripener":
             est["ripener"] = "".join(est.get("ripener_partes") or [])
         elif est.get("bloque") == "reefer":
             est["reefer"] = "".join(est.get("reefer_partes") or [])
+            if cuando is not None and est.get("reefer"):
+                est["reefer_en"] = cuando
 
     def _registrar_gases(self, est, crudo, cuando):
         nums = partir_csv(crudo)
@@ -699,11 +883,16 @@ class Panel:
             valor = nums[6 + i] if 6 + i < len(nums) else None
             celda, _, _ = paso_humedad(hums[i]["valor"], hums[i]["tendencia"], valor)
             hums[i] = celda
-        self._append_lectura({
+        rec = {
             "t": cuando.isoformat(timespec="seconds"),
             "ip": est["ip"],
             "v": [_num(v) for v in gases],
-        })
+        }
+        marca = est.get("reefer_en")
+        nums_r = partir_csv(est.get("reefer") or "")
+        if nums_r and marca is not None and 0 <= (cuando - marca).total_seconds() <= 15:
+            rec["r"] = [_num(v) for v in nums_r[:16]]
+        self._append_lectura(rec)
 
     def _append_lectura(self, rec):
         dia = _parse_iso(rec["t"])
@@ -719,6 +908,8 @@ class Panel:
 
     def _observar_cmd(self, ip, texto, origen, cuando):
         if self._cerrar_respuesta(ip, texto, cuando):
+            return None
+        if _es_ciclo(texto):
             return None
         familia = _familia_comando(texto)
         if not familia:
@@ -800,6 +991,8 @@ class Panel:
         filas = self._leer_comandos(hoy - datetime.timedelta(days=1), hoy)
         limite = ahora() - datetime.timedelta(seconds=30)
         for item in filas:
+            if _es_ciclo(item.get("trama")):
+                continue
             ident = str(item.get("id") or "")
             if ident.startswith("h") and ident[1:].isdigit():
                 self._cmd_seq = max(self._cmd_seq, int(ident[1:]))
@@ -1009,6 +1202,7 @@ class Panel:
             "humedad": humedad,
             "compresores": compresores,
             "estados": estados,
+            "reefer": interpretar_reefer(partir_csv(est.get("reefer") or "")),
             "rs": rs,
             "inyector": _armar_inyector(est.get("inyector") or "", est.get("inyector_flag") or ""),
             "salidas": self._armar_salidas(est.get("salidas") or ""),
@@ -1255,7 +1449,7 @@ def _estado_mem(ip, data):
     est = _nuevo_estado(ip)
     est.update(data)
     est["ip"] = ip
-    for campo in ("ultima", "d02_en", "salidas_en", "etileno_en", "inyector_en", "ack_en"):
+    for campo in ("ultima", "d02_en", "salidas_en", "etileno_en", "inyector_en", "ack_en", "reefer_en"):
         est[campo] = _parse_iso(est.get(campo))
     if not isinstance(est.get("celdas"), list) or len(est["celdas"]) != 6:
         est["celdas"] = _celdas_vacias()
@@ -1470,7 +1664,170 @@ def _analisis_pub(stats):
     }
 
 
-def _fila_tabla(rec, celdas, objetivos):
+def _xml(texto):
+    return (str(texto).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _columnas_reporte():
+    base = ["Fecha", "CO₂ z1", "O₂ z1", "CO₂ z2", "O₂ z2", "CO₂ z3", "O₂ z3"]
+    return base + [nombre for _clave, nombre, _tipo, unidad in CAMPOS_REEFER]
+
+
+def _fila_reporte(fila):
+    celdas = [fila.get("fecha") or ""]
+    for zona in fila.get("zonas") or []:
+        for gas in ("co2", "o2"):
+            valor = (zona.get(gas) or {}).get("valor")
+            celdas.append("" if valor is None else round(float(valor), 2))
+    por_clave = {c["clave"]: c for c in (fila.get("reefer") or [])}
+    for clave, _nombre, _tipo, _unidad in CAMPOS_REEFER:
+        campo = por_clave.get(clave) or {}
+        celdas.append(campo.get("texto") or "NA")
+    return celdas
+
+
+def _xlsx_reporte(filas):
+    import zipfile
+    from io import BytesIO
+    cabecera = _columnas_reporte()
+    filas_xml = []
+    def celda(ref, valor):
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            return f'<c r="{ref}"><v>{valor}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{_xml(valor)}</t></is></c>'
+    def fila_xml(n, valores):
+        partes = []
+        for i, valor in enumerate(valores):
+            letra = chr(ord("A") + i) if i < 26 else "A" + chr(ord("A") + i - 26)
+            partes.append(celda(f"{letra}{n}", valor))
+        return f'<row r="{n}">{"".join(partes)}</row>'
+    filas_xml.append(fila_xml(1, cabecera))
+    for n, fila in enumerate(filas, start=2):
+        filas_xml.append(fila_xml(n, _fila_reporte(fila)))
+    hoja = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData>' + "".join(filas_xml) + '</sheetData></worksheet>'
+    )
+    tipos = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    libro = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Cerro" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    libro_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", tipos)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("xl/workbook.xml", libro)
+        zf.writestr("xl/_rels/workbook.xml.rels", libro_rels)
+        zf.writestr("xl/worksheets/sheet1.xml", hoja)
+    return buf.getvalue()
+
+
+def _pdf_esc(texto):
+    crudo = str(texto).encode("latin-1", "replace").decode("latin-1")
+    return crudo.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _pdf_reporte(filas, desde, hasta):
+    cabecera = ["Fecha", "CO2 1", "O2 1", "CO2 2", "O2 2", "CO2 3", "O2 3",
+                "Power", "SP", "Sum", "Ret", "Eva", "Cond", "S1", "S2", "S3", "S4",
+                "Hum", "CFM", "CO2", "O2", "SPH", "SPC"]
+    anchos = [70, 24, 24, 24, 24, 24, 24, 48, 28, 28, 28, 28, 28, 24, 24, 24, 24, 28, 28, 28, 24, 28, 28]
+    filas_txt = []
+    for fila in filas:
+        valores = _fila_reporte(fila)
+        corto = []
+        for i, valor in enumerate(valores):
+            texto = "" if valor is None else str(valor)
+            if i > 0:
+                texto = texto.replace(" °C", "").replace(" %", "").replace(" CFM", "")
+                if texto == "Encendido":
+                    texto = "ON"
+                elif texto == "Apagado":
+                    texto = "OFF"
+            corto.append(texto)
+        filas_txt.append(corto)
+    alto, margen, fila_h = 595, 18, 11
+    y0 = alto - 36
+    capacidad = max(1, int((y0 - 24) / fila_h) - 1)
+    paginas = [filas_txt[i:i + capacidad] for i in range(0, max(1, len(filas_txt)), capacidad)] or [[]]
+    objetos = []
+    def agregar(cuerpo):
+        objetos.append(cuerpo)
+        return len(objetos)
+    kids = []
+    for indice, bloque in enumerate(paginas, start=1):
+        lineas = [f"BT /F1 8 Tf 18 {alto - 22} Td ({_pdf_esc('Cerro Prieto  ' + str(desde or '') + '  a  ' + str(hasta or '') + '   pag ' + str(indice))}) Tj ET"]
+        y = y0
+        def pintar(valores, negrita):
+            nonlocal y
+            x = margen
+            fuente = "/F1 7 Tf" if not negrita else "/F1 6 Tf"
+            for texto, ancho in zip(valores, anchos):
+                lineas.append(f"BT {fuente} {x:.1f} {y:.1f} Td ({_pdf_esc(texto)}) Tj ET")
+                x += ancho
+            y -= fila_h
+        pintar(cabecera, True)
+        for valores in bloque:
+            pintar(valores, False)
+        stream = "\n".join(lineas).encode("latin-1", "replace")
+        kids.append(agregar(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"))
+    recursos = agregar(b"<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>")
+    paginas_ids = []
+    for contenido in kids:
+        paginas_ids.append(agregar(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Contents {contenido} 0 R /Resources {recursos} 0 R >>".encode()
+        ))
+    hijos = " ".join(f"{n} 0 R" for n in paginas_ids)
+    # Parent is reserved as object 2. Shift: we already numbered contents and pages after recursos.
+    # Rebuild with a fixed catalog so /Parent points at the Pages object.
+    # The objects list currently is contents..., resources, pages... Parent id is unknown until inserted.
+    # Simpler: set Parent to the pages object we add now, and patch the page dicts.
+    paginas_obj = len(objetos) + 1
+    for i, pagina in enumerate(paginas_ids):
+        objetos[pagina - 1] = objetos[pagina - 1].replace(b"/Parent 2 0 R", f"/Parent {paginas_obj} 0 R".encode())
+    agregar(f"<< /Type /Pages /Count {len(paginas_ids)} /Kids [{hijos}] >>".encode())
+    catalogo = agregar(f"<< /Type /Catalog /Pages {paginas_obj} 0 R >>".encode())
+    salida = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, cuerpo in enumerate(objetos, start=1):
+        offsets.append(len(salida))
+        salida.extend(f"{i} 0 obj\n".encode())
+        salida.extend(cuerpo)
+        salida.extend(b"\nendobj\n")
+    xref = len(salida)
+    salida.extend(f"xref\n0 {len(objetos) + 1}\n".encode())
+    salida.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        salida.extend(f"{off:010d} 00000 n \n".encode())
+    salida.extend(f"trailer << /Size {len(objetos) + 1} /Root {catalogo} 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+    return bytes(salida)
+
+
+def _fila_tabla(rec, celdas, objetivos, reefer=None):
     zonas = []
     for z in (1, 2, 3):
         zonas.append({
@@ -1479,7 +1836,13 @@ def _fila_tabla(rec, celdas, objetivos):
             "o2": _gas_pub(celdas[z + 2], objetivos["o2"][str(z)]),
         })
     dt = _parse_iso(rec.get("t"))
-    return {"fecha": fmt_fecha(dt), "t": rec.get("t"), "zonas": zonas}
+    campos = reefer if reefer is not None else interpretar_reefer(rec.get("r"))
+    return {
+        "fecha": fmt_fecha(dt),
+        "t": rec.get("t"),
+        "zonas": zonas,
+        "reefer": [{"clave": c["clave"], "nombre": c["nombre"], "texto": c["texto"], "valor": c["valor"]} for c in campos],
+    }
 
 
 def _linea_lectura(linea):
@@ -1524,6 +1887,86 @@ def _atomic_json(path, obj):
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
+
+
+def fecha_de_nombre(nombre):
+    coincidencia = NOMBRE_LOG.match(os.path.basename(str(nombre or "")))
+    if not coincidencia:
+        return None
+    dia, mes, anio = (int(coincidencia.group(i)) for i in (1, 2, 3))
+    try:
+        return datetime.date(anio, mes, dia)
+    except ValueError:
+        return None
+
+
+def _marcas_log(ruta):
+    with open(ruta, encoding="utf-8", errors="replace") as fh:
+        for cruda in fh:
+            marca = MARCA_LOG.match(cruda.strip())
+            if not marca:
+                continue
+            texto = marca.group(2).strip()
+            if texto:
+                yield marca.group(1), texto
+
+
+def analizar_captura(ruta):
+    """Lee un txt del ciclo y arma las lecturas con la hora de STARCOOL_CONSULTA."""
+    fecha = fecha_de_nombre(ruta)
+    if fecha is None:
+        raise PanelError(400, "el archivo debe llamarse cerro_dia_mes_año.txt o cerro_dia_mes_año_extra.txt")
+    if not os.path.isfile(ruta):
+        raise PanelError(404, "no está ese archivo")
+    reefer = ""
+    partes = []
+    en_reefer = False
+    reefer_en = None
+    filas = []
+    for hora, texto in _marcas_log(ruta):
+        try:
+            cuando = datetime.datetime.combine(
+                fecha, datetime.time.fromisoformat(hora), tzinfo=ZONA
+            )
+        except ValueError:
+            continue
+        if en_reefer and CONTINUACION.match(texto):
+            partes.append(texto)
+            reefer = "".join(partes)
+            reefer_en = cuando
+            continue
+        en_reefer = False
+        if texto.startswith("REEFER_QUEST:"):
+            en_reefer = True
+            resto = texto.split(":", 1)[1]
+            partes = [resto] if resto else []
+            reefer = "".join(partes)
+            reefer_en = cuando if reefer else None
+            continue
+        if not texto.startswith("STARCOOL_CONSULTA:"):
+            continue
+        nums = partir_csv(texto.split(":", 1)[1])
+        gases = [nums[i] if i < len(nums) else None for i in range(6)]
+        if all(v is None for v in gases):
+            continue
+        rec = {
+            "t": cuando.isoformat(timespec="seconds"),
+            "ip": "archivo",
+            "v": [_num(v) for v in gases],
+        }
+        if reefer and reefer_en is not None and 0 <= (cuando - reefer_en).total_seconds() <= 15:
+            rec["r"] = [_num(v) for v in partir_csv(reefer)[:16]]
+        filas.append(rec)
+    if not filas:
+        raise PanelError(400, "el archivo no trae ninguna STARCOOL_CONSULTA")
+    return {
+        "fecha": fecha.isoformat(),
+        "fecha_display": fecha.strftime("%d/%m/%Y"),
+        "nombre": os.path.basename(ruta),
+        "lecturas_archivo": len(filas),
+        "con_reefer": sum(1 for rec in filas if rec.get("r")),
+        "_filas": filas,
+    }
 
 
 def _test_reconstruccion(tmp):
@@ -1596,6 +2039,38 @@ def _test_reconstruccion(tmp):
     assert h[2]["valor"] == 100.0 and h[2]["reinicio"] is True
     assert v["datos_total"]["fecha"].endswith("-05:00")
     assert v["paso"] == "inyector"
+    campos = {c["clave"]: c for c in v["reefer"]}
+    assert campos["power"]["texto"] == "Encendido"
+    assert campos["set_point"]["valor"] == 4.0
+    assert campos["suministro"]["texto"] == "3.9 °C"
+    assert campos["sensor_1"]["valor"] == 28.3
+    assert campos["sensor_2"]["texto"] == "NA"
+    assert campos["humedad"]["valor"] == 81.0
+    assert campos["ventilacion"]["texto"] == "0.0 CFM"
+    assert campos["co2"]["valor"] == 4.4
+    assert campos["o2"]["texto"] == "0.0 %"
+    assert campos["sp_humedad"]["texto"] == "NA"
+    assert campos["sp_co2"]["texto"] == "NA"
+    assert campos["condensador"]["clase"] == "caliente"
+    hoy = ahora().date().isoformat()
+    tabla = p.lecturas(hoy, hoy, ip)["tabla"]
+    reciente = tabla[0]
+    assert reciente["zonas"][0]["co2"]["valor"] == 6.2
+    assert {c["clave"]: c["texto"] for c in reciente["reefer"]}["power"] == "Encendido"
+    assert reciente["t"]
+    cuerpo, _tipo, _nombre = p.reporte(hoy, hoy, ip, "xlsx")
+    assert cuerpo[:2] == b"PK"
+    import zipfile
+    from io import BytesIO
+    hoja = zipfile.ZipFile(BytesIO(cuerpo)).read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "Encendido" in hoja and "NA" in hoja and "6.2" in hoja
+    pdf = p.reporte(hoy, hoy, ip, "pdf")[0]
+    assert pdf.startswith(b"%PDF")
+    p._ips[ip]["reefer_en"] = ahora() - datetime.timedelta(seconds=40)
+    p.linea(ip, "STARCOOL_CONSULTA:7.0,5.1,8.3,4.1,10.0,12.0,89.8,92.1,100.0,1,0,1,0,0,0")
+    suelta = p.lecturas(hoy, hoy, ip)["tabla"][0]
+    assert suelta["zonas"][0]["co2"]["valor"] == 7.0
+    assert all(c["texto"] == "NA" for c in suelta["reefer"])
 
 
 def _test_flecha(tmp):
@@ -1675,6 +2150,11 @@ def _test_historico(tmp):
     assert o2["fuera"] == 2
     assert data["tabla"][0]["zonas"][0]["co2"]["reinicio"] is True
     assert data["tabla"][0]["zonas"][0]["co2"]["valor"] == 8.0
+    marca = _parse_iso(data["puntos"][0]["t"])
+    clave = marca.strftime("%Y-%m-%dT%H:00")
+    assert p.lecturas(clave, clave, ip)["total"] == 3
+    otra = (marca + datetime.timedelta(hours=5)).strftime("%Y-%m-%dT%H:00")
+    assert p.lecturas(otra, otra, ip)["total"] == 0
     assert len(data["por_hora"]) == 1
     hora = data["por_hora"][0]
     assert hora["etiqueta"].endswith(":00")
@@ -1692,46 +2172,101 @@ def _test_comandos(tmp):
     p = Panel(tmp)
     ip = "10.0.0.8"
     base = ahora().replace(microsecond=0)
-    p.observar_serial(ip, "STARCOOL:QUEST", "in", base)
-    p.observar_serial(ip, "STARCOOL_CONSULTA:6.2,5.1,8.1,4.1,10.4,11.8,80,90,100,1,0,0,1,0,0", "in", base + datetime.timedelta(seconds=2))
-    p.observar_serial(ip, "INYECTOR:ESTADO?", "in", base + datetime.timedelta(seconds=6))
-    p.observar_serial(ip, "INYECTOR:0000111111100000,1", "in", base + datetime.timedelta(seconds=7))
-    p.observar_serial(ip, "INYECTOR:VALCO211", "out", base + datetime.timedelta(seconds=12))
-    p.observar_serial(ip, "INYECTOR:VALCO211", "in", base + datetime.timedelta(seconds=12, milliseconds=400))
-    p.observar_serial(ip, "INYECTOR_OK", "in", base + datetime.timedelta(seconds=13))
-    p.observar_serial("10.9.9.9", "STARCOOL_OK", "in", base + datetime.timedelta(seconds=13))
+    for trama in (
+        "SERVIDOR:CO2_1:6.00",
+        "RIPENER:QUEST",
+        "REEFER:QUEST",
+        "STARCOOL:QUEST",
+        "STARCOOL_CONSULTA:6.2,5.1,8.1,4.1,10.4,11.8,80,90,100,1,0,0,1,0,0",
+        "STARCOOL:SALIDAS",
+        "STARCOOL_SALIDAS:1,0,1,0,0,0",
+        "INYECTOR:ESTADO?",
+        "INYECTOR:0000111111100000,1",
+        "RIPENER:PLATAFORMA",
+        "STARCOOL:PLATAFORMA",
+    ):
+        p.observar_serial(ip, trama, "in", base)
+    zona = base.replace(hour=10, minute=0, second=0, microsecond=0)
+    p.observar_serial(ip, "STARCOOL:ZONA111", "in", zona)
+    p.observar_serial(ip, "STARCOOL_OK", "in", zona + datetime.timedelta(seconds=1))
+    valvula_en = zona + datetime.timedelta(hours=2, seconds=12)
+    p.observar_serial(ip, "INYECTOR:VALCO211", "out", valvula_en)
+    p.observar_serial(ip, "INYECTOR:VALCO211", "in", valvula_en + datetime.timedelta(milliseconds=400))
+    p.observar_serial(ip, "INYECTOR_OK", "in", valvula_en + datetime.timedelta(seconds=1))
+    p.observar_serial("10.9.9.9", "STARCOOL_OK", "in", valvula_en + datetime.timedelta(seconds=1))
     hoy = base.date().isoformat()
     filas = p.historial_comandos(hoy, hoy, ip)["comandos"]
-    assert [x["trama"] for x in filas] == ["INYECTOR:VALCO211", "INYECTOR:ESTADO?", "STARCOOL:QUEST"]
+    assert [x["trama"] for x in filas] == ["INYECTOR:VALCO211", "STARCOOL:ZONA111"]
     valvula = filas[0]
     assert valvula["origen"] == "interfaz"
     assert valvula["familia"] == "valvulas"
     assert valvula["respuesta"] == "INYECTOR_OK"
     assert valvula["espera_s"] == 1
-    assert valvula["delta_anterior_s"] == 6
-    estado = filas[1]
-    assert estado["origen"] == "serial"
-    assert estado["familia"] == "inyector"
-    assert estado["respuesta"] == "INYECTOR:0000111111100000,1"
-    assert estado["espera_s"] == 1
-    quest = filas[2]
-    assert quest["origen"] == "serial"
-    assert quest["familia"] == "starcool"
-    assert quest["respuesta"].startswith("STARCOOL_CONSULTA:")
-    assert quest["espera_s"] == 2
-    assert quest["delta_anterior_s"] is None
+    assert valvula["delta_anterior_s"] == 2 * 3600 + 12
+    zona_pub = filas[1]
+    assert zona_pub["origen"] == "serial"
+    assert zona_pub["familia"] == "starcool"
+    assert zona_pub["respuesta"] == "STARCOOL_OK"
+    assert zona_pub["delta_anterior_s"] is None
+    hora_zona = zona.strftime("%Y-%m-%dT%H:00")
+    solo_hora = p.historial_comandos(hora_zona, hora_zona, ip)["comandos"]
+    assert [x["trama"] for x in solo_hora] == ["STARCOOL:ZONA111"]
     solo = p.historial_comandos(hoy, hoy, ip, familia="valvulas")["comandos"]
     assert len(solo) == 1 and solo[0]["trama"] == "INYECTOR:VALCO211"
     p2 = Panel(tmp)
     otra = p2.historial_comandos(hoy, hoy, ip)["comandos"]
+    assert [x["trama"] for x in otra] == ["INYECTOR:VALCO211", "STARCOOL:ZONA111"]
     assert otra[0]["respuesta"] == "INYECTOR_OK"
-    assert otra[0]["delta_anterior_s"] == 6
+    assert otra[0]["delta_anterior_s"] == 2 * 3600 + 12
+
+
+def _test_importar(tmp):
+    carpeta = os.path.join(tmp, "logs")
+    os.makedirs(carpeta)
+    ruta = os.path.join(carpeta, "cerro_23_10_2026_extra.txt")
+    with open(ruta, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[00:00:12] REEFER_QUEST:\n"
+            "[00:00:12] 1,3.8,4.0,6.9,0.1,37.3\n"
+            "[00:00:12] ,28.3,0.0,0.0,0.0,80\n"
+            "[00:00:12] ,0,4.4,0.0,254.0,-38.5\n"
+            "[00:00:14] STARCOOL:QUEST\n"
+            "[00:00:14] STARCOOL_CONSULTA:6.2,3.7,6.3,6.8,12.5,12.8,63.0,90.6,100.0,1,1,0,0,0,1\n"
+            "OK\n"
+        )
+    p = Panel(tmp)
+    info = p.incorporar_archivo(ruta)
+    assert info["incorporado"] is True
+    assert info["fecha"] == "2026-10-23"
+    assert info["lecturas_archivo"] == 1
+    assert info["con_reefer"] == 1
+    visto = p.lecturas("2026-10-23T00:00", "2026-10-23T00:00", "190.223.54.2")
+    assert visto["total"] == 1
+    fila = visto["tabla"][0]
+    assert fila["zonas"][0]["co2"]["valor"] == 6.2
+    assert fila["t"].startswith("2026-10-23T00:00:14")
+    textos = {c["clave"]: c["texto"] for c in fila["reefer"]}
+    assert textos["power"] == "Encendido"
+    assert textos["suministro"] == "4.0 °C"
+    assert textos["sp_co2"] == "NA"
+    repetido = p.incorporar_archivo(ruta)
+    assert repetido["existe"] is True and repetido["incorporado"] is False
+    assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
+    p.incorporar_archivo(ruta, reemplazar=True)
+    assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
+    malo = os.path.join(carpeta, "notas.txt")
+    open(malo, "w").close()
+    try:
+        p.incorporar_archivo(malo)
+        raise AssertionError("debio rechazar el nombre")
+    except PanelError as e:
+        assert e.status == 400
 
 
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

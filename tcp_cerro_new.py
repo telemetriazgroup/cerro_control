@@ -7,7 +7,7 @@ import threading
 import datetime
 import json
 from http.cookies import SimpleCookie
-from panel_cerro import Panel, PanelError, ahora
+from panel_cerro import Panel, PanelError, ahora, fecha_de_nombre
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +25,8 @@ API_HTTP_PORT = int(os.environ.get("CERRO_API_PORT", "9986"))
 # Si CERRO_API_TOKEN está definido, POST /comando exige la cabecera X-Token.
 API_TOKEN = os.environ.get("CERRO_API_TOKEN", "").strip()
 BASE_DIR = os.environ.get("CERRO_DIR", os.getcwd())
+DIR_LOGS = os.environ.get("CERRO_LOGS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "datos")
+MAX_ARCHIVO = 20 * 1024 * 1024
 RUTA_INTERFAZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "interfaz.html")
 RUTA_LOGIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "login.html")
 USUARIO_PANEL = os.environ.get("CERRO_USER", "").strip() or "zgroup"
@@ -1008,6 +1010,29 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._json(200, panel.historial_comandos(desde, hasta, ip, origen, familia))
             except PanelError as e:
                 self._json(e.status, {"ok": False, "detalle": e.detalle})
+        elif ruta == "/reporte":
+            consulta = parse_qs(urlparse(self.path).query)
+            hoy = ahora().date().isoformat()
+            desde = (consulta.get("desde") or [hoy])[0]
+            hasta = (consulta.get("hasta") or [hoy])[0]
+            ip = (consulta.get("ip") or [None])[0]
+            formato = (consulta.get("formato") or ["xlsx"])[0]
+            if ip:
+                ip = ip.strip() or None
+            try:
+                cuerpo, tipo, nombre = panel.reporte(desde, hasta, ip, formato)
+            except PanelError as e:
+                self._json(e.status, {"ok": False, "detalle": e.detalle})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", tipo)
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(cuerpo)
+        elif ruta == "/archivos":
+            self._json(200, {"archivos": listar_capturas()})
         else:
             self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
 
@@ -1027,6 +1052,39 @@ class ApiHandler(BaseHTTPRequestHandler):
         if data.get("ip") is not None:
             data["ip"] = str(data["ip"]).strip() or None
         return data
+
+    def _recibir_archivo(self):
+        consulta = parse_qs(urlparse(self.path).query)
+        nombre = _nombre_captura((consulta.get("nombre") or [""])[0])
+        largo = int(self.headers.get("Content-Length", "0") or "0")
+        if largo <= 0 or largo > MAX_ARCHIVO:
+            raise ErrorComando(400, "el archivo tiene que pesar entre 1 byte y 20 MB")
+        os.makedirs(DIR_LOGS, exist_ok=True)
+        destino = os.path.join(DIR_LOGS, nombre)
+        temporal = destino + ".tmp"
+        quedo = largo
+        try:
+            with open(temporal, "wb") as fh:
+                while quedo:
+                    bloque = self.rfile.read(min(65536, quedo))
+                    if not bloque:
+                        break
+                    fh.write(bloque)
+                    quedo -= len(bloque)
+                    fh.flush()
+            if quedo:
+                raise ErrorComando(400, "el archivo llegó incompleto")
+            os.replace(temporal, destino)
+        except ErrorComando:
+            if os.path.exists(temporal):
+                os.remove(temporal)
+            raise
+        except OSError as e:
+            if os.path.exists(temporal):
+                os.remove(temporal)
+            raise ErrorComando(500, f"no se pudo guardar el archivo: {e}")
+        reemplazar = (consulta.get("reemplazar") or ["0"])[0] in ("1", "true", "si")
+        self._json(200, panel.incorporar_archivo(destino, reemplazar=reemplazar))
 
     def do_POST(self):
         ruta = self._ruta()
@@ -1065,6 +1123,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif ruta == "/cola/cancelar":
                 data = self._cuerpo_json()
                 self._json(200, {"ok": True, "comando": panel.cancelar(data.get("id"))})
+            elif ruta == "/archivos":
+                self._recibir_archivo()
+            elif ruta == "/archivos/incorporar":
+                data = self._cuerpo_json()
+                self._json(200, _incorporar_guardado(data.get("nombre"), bool(data.get("reemplazar"))))
             else:
                 self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:
@@ -1094,8 +1157,45 @@ def _servir_api():
             time.sleep(REINICIO_SERVIDOR_SEG)
 
 
+def _nombre_captura(nombre):
+    base = os.path.basename(str(nombre or "").replace("\\", "/"))
+    if fecha_de_nombre(base) is None:
+        raise ErrorComando(
+            400,
+            "el archivo debe llamarse cerro_dia_mes_año.txt o cerro_dia_mes_año_extra.txt",
+        )
+    return base
+
+
+def listar_capturas():
+    os.makedirs(DIR_LOGS, exist_ok=True)
+    salida = []
+    for nombre in sorted(os.listdir(DIR_LOGS)):
+        if fecha_de_nombre(nombre) is None:
+            continue
+        ruta = os.path.join(DIR_LOGS, nombre)
+        if not os.path.isfile(ruta):
+            continue
+        fecha = fecha_de_nombre(nombre)
+        salida.append({
+            "nombre": nombre,
+            "fecha": fecha.isoformat(),
+            "fecha_display": fecha.strftime("%d/%m/%Y"),
+            "bytes": os.path.getsize(ruta),
+            "lecturas_actuales": panel.lecturas_del_dia(fecha),
+        })
+    return salida
+
+
+def _incorporar_guardado(nombre, reemplazar):
+    base = _nombre_captura(nombre)
+    ruta = os.path.join(DIR_LOGS, base)
+    return panel.incorporar_archivo(ruta, reemplazar=reemplazar)
+
+
 def run_forever():
     os.makedirs(BASE_DIR, exist_ok=True)
+    os.makedirs(DIR_LOGS, exist_ok=True)
     _reset_http_session()
     threading.Thread(target=_reintentar_api_pendientes, daemon=True).start()
     threading.Thread(target=_servir_api, daemon=True).start()
