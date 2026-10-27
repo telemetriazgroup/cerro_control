@@ -270,6 +270,7 @@
   <button type="button" class="solo-admin" data-tabbtn="serial">Serial</button>
   <button type="button" class="solo-admin" data-tabbtn="cmdhist">Historial de comandos</button>
   <button type="button" class="solo-admin" data-tabbtn="usuarios">Usuarios</button>
+  <button type="button" class="solo-admin" data-tabbtn="flujo">Flujo de control</button>
 </nav>
 <div class="marco">
   <main>
@@ -492,6 +493,63 @@
         <pre id="log"></pre>
       </section>
       <p class="leyenda" id="json-nota"></p>
+    </div>
+    <div id="tab-flujo" hidden>
+      <section class="bloque">
+        <h2>Pares encendido / apagado</h2>
+        <p class="leyenda">Dos comandos del catálogo. Mantener N segundos arma el apagado para el primer hueco que ya cumplió ese plazo, contado desde que el encendido salió por el serial.</p>
+        <form id="form-par" class="rango">
+          <label>Nombre<input id="par-nombre" required maxlength="80"></label>
+          <label>Encendido<select id="par-on" required></select></label>
+          <label>Apagado<select id="par-off" required></select></label>
+          <button class="primario" type="submit">Guardar par</button>
+        </form>
+        <div id="pares-lista"></div>
+      </section>
+      <section class="bloque">
+        <h2>Secuencias</h2>
+        <p class="leyenda">Cada espera son los segundos después de que el paso anterior salió. Cero significa el hueco siguiente.</p>
+        <form id="form-sec">
+          <div class="rango">
+            <label>Nombre<input id="sec-nombre" required maxlength="80"></label>
+            <button class="primario" type="submit">Guardar secuencia</button>
+          </div>
+          <div id="pasos-sec"></div>
+          <button type="button" id="agregar-paso">Agregar paso</button>
+        </form>
+        <div id="sec-lista"></div>
+      </section>
+      <section class="bloque">
+        <h2>Reglas de CO₂ y O₂</h2>
+        <p class="leyenda" id="flujo-vigente">Sin lectura vigente.</p>
+        <p class="leyenda">Hacen falta dos consultas seguidas dentro del rango. Al entrar dispara una vez. Mientras siga, repite con una pausa de 60 segundos al terminar la secuencia. Una regla nueva nace desactivada.</p>
+        <form id="form-regla">
+          <div class="rango">
+            <label>Nombre<input id="regla-nombre" required maxlength="80"></label>
+            <label>Secuencia<select id="regla-sec" required></select></label>
+            <label>Modo
+              <select id="regla-modo">
+                <option value="entrar">Al entrar</option>
+                <option value="seguir">Mientras siga</option>
+              </select>
+            </label>
+            <button class="primario" type="submit">Guardar regla</button>
+          </div>
+          <div id="conds-regla"></div>
+          <button type="button" id="agregar-cond">Agregar condición</button>
+        </form>
+        <div id="reglas-lista"></div>
+      </section>
+      <section class="bloque">
+        <h2>Registro</h2>
+        <form id="form-corridas" class="rango">
+          <label class="hora">Desde<input type="datetime-local" id="flujo-desde" step="3600"></label>
+          <label class="hora">Hasta<input type="datetime-local" id="flujo-hasta" step="3600"></label>
+          <label>Origen<select id="flujo-origen"><option value="">Todos</option></select></label>
+          <button class="primario" type="submit">Ver</button>
+        </form>
+        <div id="corridas-lista"></div>
+      </section>
     </div>
     <div id="tab-usuarios" hidden>
       <section class="bloque">
@@ -1008,7 +1066,7 @@ function filaCola(item, pendiente) {
   b.textContent = item.titulo || item.trama;
   const s = document.createElement("span");
   const estado = {0: "Enviado", 1: "Pendiente", 2: "Error", 3: "Cancelado", 4: "Enviando"}[item.estado] || "";
-  s.textContent = item.trama + " · " + estado + (item.enviado_display ? " · " + item.enviado_display : "") + (item.ack ? " · " + item.ack : "") + (item.error ? " · " + item.error : "");
+  s.textContent = item.trama + " · " + estado + (item.disponible_display ? " · desde " + item.disponible_display : "") + (item.enviado_display ? " · " + item.enviado_display : "") + (item.ack ? " · " + item.ack : "") + (item.error ? " · " + item.error : "");
   fila.append(b, s);
   if (pendiente && item.estado === 1) {
     const btn = document.createElement("button");
@@ -1552,12 +1610,14 @@ function ir(tab) {
   document.getElementById("tab-serial").hidden = tab !== "serial";
   document.getElementById("tab-cmdhist").hidden = tab !== "cmdhist";
   document.getElementById("tab-usuarios").hidden = tab !== "usuarios";
+  document.getElementById("tab-flujo").hidden = tab !== "flujo";
   if (tab === "hist") {
     cargarLecturas(true).catch(e => mostrarAviso(e.message, true));
     if (!esMonitor()) listarArchivos().catch(() => {});
   }
   if (tab === "cmdhist") cargarComandos(true).catch(e => mostrarAviso(e.message, true));
   if (tab === "usuarios") cargarUsuarios().catch(e => mostrarAviso(e.message, true));
+  if (tab === "flujo") cargarFlujo().catch(e => mostrarAviso(e.message, true));
   if (tab === "serial" && pegado) log.scrollTop = log.scrollHeight;
 }
 
@@ -2047,6 +2107,342 @@ document.getElementById("form-usuario").addEventListener("submit", async (ev) =>
   }
 });
 
+let firmaComandos = "";
+function opcionesCmd(select, valor) {
+  const firma = select.dataset.firma || "";
+  if (firma === firmaComandos && select.options.length) {
+    if (valor) select.value = valor;
+    return;
+  }
+  select.dataset.firma = firmaComandos;
+  const previo = valor || select.value;
+  select.replaceChildren();
+  (window.comandosFlujo || []).forEach(cmd => {
+    const op = document.createElement("option");
+    op.value = cmd.id;
+    op.textContent = (cmd.titulo || cmd.trama) + " · " + cmd.trama;
+    select.appendChild(op);
+  });
+  if (previo) select.value = previo;
+}
+function filaPaso(cmdId, espera) {
+  const fila = document.createElement("div");
+  fila.className = "rango fila-paso";
+  const sel = document.createElement("select");
+  sel.className = "paso-cmd";
+  opcionesCmd(sel, cmdId || "");
+  const esperaIn = document.createElement("input");
+  esperaIn.type = "number";
+  esperaIn.min = "0";
+  esperaIn.step = "1";
+  esperaIn.className = "paso-espera";
+  esperaIn.value = espera == null ? "0" : String(espera);
+  esperaIn.title = "Segundos después del paso anterior";
+  const quitar = document.createElement("button");
+  quitar.type = "button";
+  quitar.textContent = "Quitar paso";
+  quitar.addEventListener("click", () => fila.remove());
+  fila.append(sel, esperaIn, quitar);
+  return fila;
+}
+function filaCond(cond) {
+  const fila = document.createElement("div");
+  fila.className = "rango fila-cond";
+  const zona = document.createElement("select");
+  zona.className = "cond-zona";
+  [1, 2, 3].forEach(n => {
+    const op = document.createElement("option");
+    op.value = String(n);
+    op.textContent = "Zona " + n;
+    zona.appendChild(op);
+  });
+  const gas = document.createElement("select");
+  gas.className = "cond-gas";
+  [["co2", "CO₂"], ["o2", "O₂"]].forEach(([v, t]) => {
+    const op = document.createElement("option");
+    op.value = v;
+    op.textContent = t;
+    gas.appendChild(op);
+  });
+  const desde = document.createElement("input");
+  desde.className = "cond-desde";
+  desde.type = "number";
+  desde.step = "0.1";
+  desde.placeholder = "Desde";
+  const hasta = document.createElement("input");
+  hasta.className = "cond-hasta";
+  hasta.type = "number";
+  hasta.step = "0.1";
+  hasta.placeholder = "Hasta";
+  if (cond) {
+    zona.value = String(cond.zona);
+    gas.value = cond.gas;
+    desde.value = cond.desde;
+    hasta.value = cond.hasta;
+  }
+  const quitar = document.createElement("button");
+  quitar.type = "button";
+  quitar.textContent = "Quitar";
+  quitar.addEventListener("click", () => fila.remove());
+  fila.append(zona, gas, desde, hasta, quitar);
+  return fila;
+}
+function textoLecturas(lecturas) {
+  if (!lecturas || !lecturas.length) return "Sin lectura vigente.";
+  return "Lectura vigente: " + lecturas.map(x => "Z" + x.zona + " " + (x.gas === "co2" ? "CO₂" : "O₂") + " " + (x.valor == null ? "—" : x.valor)).join(" · ");
+}
+function pintarFlujo(data, soloVivo) {
+  window.comandosFlujo = data.comandos || [];
+  firmaComandos = JSON.stringify(window.comandosFlujo.map(c => c.id + c.trama));
+  setTexto("flujo-vigente", textoLecturas(data.lecturas));
+  opcionesCmd(document.getElementById("par-on"));
+  opcionesCmd(document.getElementById("par-off"));
+  const secSel = document.getElementById("regla-sec");
+  const secPrev = secSel.value;
+  secSel.replaceChildren();
+  (data.secuencias || []).forEach(sec => {
+    const op = document.createElement("option");
+    op.value = sec.id;
+    op.textContent = sec.nombre;
+    secSel.appendChild(op);
+  });
+  if (secPrev) secSel.value = secPrev;
+  const origen = document.getElementById("flujo-origen");
+  const origenPrev = origen.value;
+  origen.replaceChildren();
+  const todos = document.createElement("option");
+  todos.value = "";
+  todos.textContent = "Todos";
+  origen.appendChild(todos);
+  (data.pares || []).forEach(par => {
+    const op = document.createElement("option");
+    op.value = par.id;
+    op.textContent = par.nombre;
+    origen.appendChild(op);
+  });
+  (data.secuencias || []).forEach(sec => {
+    const op = document.createElement("option");
+    op.value = sec.id;
+    op.textContent = sec.nombre;
+    origen.appendChild(op);
+  });
+  if (origenPrev) origen.value = origenPrev;
+  const corridas = document.getElementById("corridas-lista");
+  corridas.replaceChildren();
+  if (!(data.corridas || []).length) {
+    const p = document.createElement("p");
+    p.className = "leyenda";
+    p.textContent = "No hay corridas en ese rango.";
+    corridas.appendChild(p);
+  }
+  (data.corridas || []).forEach(corrida => {
+    const bloque = document.createElement("div");
+    bloque.className = "leyenda";
+    const titulo = document.createElement("strong");
+    const pedido = corrida.pedido_s != null ? " · pedido " + corrida.pedido_s + " s" : "";
+    titulo.textContent = (corrida.creado_display || "") + " · " + corrida.nombre + " · " + corrida.estado + pedido;
+    bloque.appendChild(titulo);
+    (corrida.pasos || []).forEach(paso => {
+      const linea = document.createElement("div");
+      const seg = paso.segundos == null ? "" : " · " + paso.segundos + " s desde el anterior";
+      const resp = paso.respuesta ? " · " + paso.respuesta : "";
+      linea.textContent = paso.n + ". " + (paso.titulo || paso.trama) + (paso.enviado_display ? " · salió " + paso.enviado_display : " · pendiente") + seg + resp;
+      bloque.appendChild(linea);
+    });
+    corridas.appendChild(bloque);
+  });
+  if (soloVivo) return;
+  const pares = document.getElementById("pares-lista");
+  pares.replaceChildren();
+  (data.pares || []).forEach(par => {
+    const fila = document.createElement("div");
+    fila.className = "rango";
+    const nombre = document.createElement("strong");
+    nombre.textContent = par.nombre;
+    const segundos = document.createElement("input");
+    segundos.type = "number";
+    segundos.min = "0";
+    segundos.step = "1";
+    segundos.value = "22";
+    segundos.className = "par-seg";
+    const enc = document.createElement("button");
+    enc.type = "button";
+    enc.textContent = "Encender";
+    enc.addEventListener("click", () => accionarPar(par.id, "encender"));
+    const apa = document.createElement("button");
+    apa.type = "button";
+    apa.textContent = "Apagar";
+    apa.addEventListener("click", () => accionarPar(par.id, "apagar"));
+    const man = document.createElement("button");
+    man.type = "button";
+    man.textContent = "Mantener";
+    man.addEventListener("click", () => accionarPar(par.id, "mantener", segundos.value));
+    const quitar = document.createElement("button");
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => quitarFlujo("/flujo/par/quitar", par.id, "¿Quitar el par " + par.nombre + "?"));
+    fila.append(nombre, segundos, enc, apa, man, quitar);
+    pares.appendChild(fila);
+  });
+  const secs = document.getElementById("sec-lista");
+  secs.replaceChildren();
+  (data.secuencias || []).forEach(sec => {
+    const fila = document.createElement("div");
+    fila.className = "rango";
+    const nombre = document.createElement("strong");
+    const nPasos = (sec.pasos || []).length;
+    nombre.textContent = sec.nombre + " · " + nPasos + (nPasos === 1 ? " paso" : " pasos");
+    const lanzar = document.createElement("button");
+    lanzar.type = "button";
+    lanzar.textContent = "Lanzar";
+    lanzar.addEventListener("click", () => lanzarSecuencia(sec.id));
+    const quitar = document.createElement("button");
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => quitarFlujo("/flujo/secuencia/quitar", sec.id, "¿Quitar la secuencia " + sec.nombre + "?"));
+    fila.append(nombre, lanzar, quitar);
+    secs.appendChild(fila);
+  });
+  const reglas = document.getElementById("reglas-lista");
+  reglas.replaceChildren();
+  (data.reglas || []).forEach(regla => {
+    const fila = document.createElement("div");
+    fila.className = "rango";
+    const nombre = document.createElement("strong");
+    const ahoraTxt = regla.ahora === "dentro" ? "ahora dentro" : regla.ahora === "fuera" ? "ahora fuera" : "sin lectura";
+    nombre.textContent = regla.nombre + " · " + (regla.activa ? "activa" : "desactivada") + " · " + (regla.modo === "seguir" ? "mientras siga" : "al entrar") + " · " + ahoraTxt;
+    const activar = document.createElement("button");
+    activar.type = "button";
+    activar.textContent = regla.activa ? "Desactivar" : "Activar";
+    activar.addEventListener("click", () => guardarReglaExistente(regla, !regla.activa));
+    const quitar = document.createElement("button");
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => quitarFlujo("/flujo/regla/quitar", regla.id, "¿Quitar la regla " + regla.nombre + "?"));
+    fila.append(nombre, activar, quitar);
+    reglas.appendChild(fila);
+  });
+  if (!document.querySelector("#pasos-sec .fila-paso")) document.getElementById("pasos-sec").appendChild(filaPaso());
+  if (!document.querySelector("#conds-regla .fila-cond")) document.getElementById("conds-regla").appendChild(filaCond());
+}
+async function cargarFlujo(soloVivo) {
+  const q = new URLSearchParams();
+  const desde = document.getElementById("flujo-desde").value;
+  const hasta = document.getElementById("flujo-hasta").value;
+  const origen = document.getElementById("flujo-origen").value;
+  if (desde) q.set("desde", desde);
+  if (hasta) q.set("hasta", hasta);
+  if (origen) q.set("origen", origen);
+  const respuesta = await fetch("/flujo" + (q.toString() ? "?" + q.toString() : ""));
+  if (sinSesion(respuesta)) return;
+  const data = await respuesta.json();
+  if (!respuesta.ok) throw new Error(data.detalle || "no se pudo leer el flujo");
+  if (!document.getElementById("flujo-desde").value && data.corridas) {
+    const hoy = new Date();
+    const dia = hoy.getFullYear() + "-" + String(hoy.getMonth() + 1).padStart(2, "0") + "-" + String(hoy.getDate()).padStart(2, "0");
+    document.getElementById("flujo-desde").value = dia + "T00:00";
+    document.getElementById("flujo-hasta").value = dia + "T23:00";
+  }
+  pintarFlujo(data, soloVivo);
+}
+async function quitarFlujo(url, id, pregunta) {
+  if (!window.confirm(pregunta)) return;
+  try {
+    const data = await postJson(url, {id});
+    pintarFlujo(data, false);
+    mostrarAviso("Listo.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+}
+async function accionarPar(id, accion, segundos) {
+  const cuerpo = {id, accion};
+  if (accion === "mantener") cuerpo.segundos = Number(segundos);
+  try {
+    const data = await postJson("/flujo/par/accionar", cuerpo);
+    pintarFlujo(data, false);
+    mostrarAviso(accion === "mantener" ? "El apagado queda armado." : "Entró a la cola.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+}
+async function lanzarSecuencia(id) {
+  try {
+    const data = await postJson("/flujo/secuencia/lanzar", {id});
+    pintarFlujo(data, false);
+    mostrarAviso("Secuencia en cola.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+}
+async function guardarReglaExistente(regla, activa) {
+  try {
+    const data = await postJson("/flujo/regla", {
+      id: regla.id,
+      nombre: regla.nombre,
+      secuencia_id: regla.secuencia_id,
+      modo: regla.modo,
+      condiciones: regla.condiciones,
+      activa
+    });
+    pintarFlujo(data, false);
+  } catch (e) { mostrarAviso(e.message, true); }
+}
+document.getElementById("agregar-paso").addEventListener("click", () => {
+  document.getElementById("pasos-sec").appendChild(filaPaso());
+});
+document.getElementById("agregar-cond").addEventListener("click", () => {
+  document.getElementById("conds-regla").appendChild(filaCond());
+});
+document.getElementById("form-par").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    const data = await postJson("/flujo/par", {
+      nombre: document.getElementById("par-nombre").value.trim(),
+      on_id: document.getElementById("par-on").value,
+      off_id: document.getElementById("par-off").value
+    });
+    document.getElementById("par-nombre").value = "";
+    pintarFlujo(data, false);
+    mostrarAviso("Par guardado.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+});
+document.getElementById("form-sec").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const pasos = [...document.querySelectorAll("#pasos-sec .fila-paso")].map(fila => ({
+    cmd_id: fila.querySelector(".paso-cmd").value,
+    espera: Number(fila.querySelector(".paso-espera").value || 0)
+  })).filter(p => p.cmd_id);
+  try {
+    const data = await postJson("/flujo/secuencia", {
+      nombre: document.getElementById("sec-nombre").value.trim(),
+      pasos
+    });
+    document.getElementById("sec-nombre").value = "";
+    pintarFlujo(data, false);
+    mostrarAviso("Secuencia guardada.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+});
+document.getElementById("form-regla").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const condiciones = [...document.querySelectorAll("#conds-regla .fila-cond")].map(fila => ({
+    zona: Number(fila.querySelector(".cond-zona").value),
+    gas: fila.querySelector(".cond-gas").value,
+    desde: Number(fila.querySelector(".cond-desde").value),
+    hasta: Number(fila.querySelector(".cond-hasta").value)
+  }));
+  try {
+    const data = await postJson("/flujo/regla", {
+      nombre: document.getElementById("regla-nombre").value.trim(),
+      secuencia_id: document.getElementById("regla-sec").value,
+      modo: document.getElementById("regla-modo").value,
+      condiciones,
+      activa: false
+    });
+    document.getElementById("regla-nombre").value = "";
+    pintarFlujo(data, false);
+    mostrarAviso("Regla guardada, desactivada.", false);
+  } catch (e) { mostrarAviso(e.message, true); }
+});
+document.getElementById("form-corridas").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try { await cargarFlujo(true); } catch (e) { mostrarAviso(e.message, true); }
+});
+
 async function cargarSesion() {
   const respuesta = await fetch("/sesion");
   if (sinSesion(respuesta)) return;
@@ -2058,6 +2454,7 @@ cargarSesion().then(() => tick()).catch(e => mostrarAviso(e.message, true));
 setInterval(() => { tick().catch(() => { if (!falloRed) { falloRed = true; mostrarAviso("Sin respuesta del panel", true); } }); }, 1000);
 setInterval(() => {
   if (document.body.dataset.tab === "hist") cargarLecturas(true).catch(() => {});
+  if (document.body.dataset.tab === "flujo") cargarFlujo(true).catch(() => {});
 }, 15000);
 </script>
 </body>

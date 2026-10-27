@@ -30,6 +30,7 @@ ACKS = {"STARCOOL_OK", "INYECTOR_OK", "REEFER_CAMBIO_OK"}
 # cortar una trama que llega partida, y más si RIPENER o el reefer siguen abiertos.
 ESPERA_VENTANA = 0.4
 ESPERA_BLOQUE = 1.15
+PAUSA_REGLA = 60
 # Consultas que el equipo repite en cada ciclo. No son comandos.
 CICLO_REGULAR = {
     "STARCOOL:QUEST",
@@ -479,6 +480,7 @@ class Panel:
         self.ruta_config = os.path.join(base_dir, "panel_config.json")
         self.ruta_cola = os.path.join(base_dir, "cola_comandos.json")
         self.ruta_vivo = os.path.join(base_dir, "estado_vivo.json")
+        self.ruta_flujo = os.path.join(base_dir, "flujos.json")
         self.dir_cmd = os.path.join(base_dir, "historial_cmd")
         os.makedirs(self.dir_lecturas, exist_ok=True)
         os.makedirs(self.dir_cmd, exist_ok=True)
@@ -495,6 +497,7 @@ class Panel:
         self.config = self._cargar_config()
         self._cargar_cola()
         self._cargar_vivo()
+        self.flujo = self._cargar_flujo()
         self._restaurar_comandos()
 
     def linea(self, ip, texto, cuando=None):
@@ -533,10 +536,14 @@ class Panel:
                 item["estado"] = 0
                 item["enviado"] = ahora().isoformat(timespec="seconds")
                 item["error"] = None
+                self._avanzar_corrida(item)
             else:
                 item["intentos"] = int(item.get("intentos") or 0) + 1
                 item["error"] = error or "no se pudo escribir en el serial"
-                item["estado"] = 2 if item["intentos"] >= 3 else 1
+                if item.get("corrida"):
+                    item["estado"] = 1
+                else:
+                    item["estado"] = 2 if item["intentos"] >= 3 else 1
             self._podar()
             self._guardar_cola()
 
@@ -572,6 +579,10 @@ class Panel:
             item = self._buscar(ident)
             if item is None or item.get("estado") != 1:
                 raise PanelError(404, "ese comando no está pendiente")
+            if item.get("corrida") and item.get("rol") == "off":
+                raise PanelError(400, "el apagado armado no se cancela")
+            if item.get("corrida"):
+                self._marcar_corrida(item["corrida"], "error", "se canceló el paso")
             item["estado"] = 3
             item["cancelado"] = ahora().isoformat(timespec="seconds")
             self._podar()
@@ -648,6 +659,192 @@ class Panel:
     def config_publica(self):
         with self._lock:
             return self._config_copy()
+
+    def flujo_publico(self, ip=None, desde_s=None, hasta_s=None, origen=None):
+        hoy = ahora().date().isoformat()
+        inicio, fin, aviso = _rango_busqueda(desde_s or hoy, hasta_s or hoy)
+        with self._lock:
+            return self._flujo_pub(ip, inicio, fin, origen, aviso)
+
+    def guardar_par(self, data):
+        if not isinstance(data, dict):
+            raise PanelError(400, "el par debe ser un objeto")
+        nombre = str(data.get("nombre") or "").strip()[:80]
+        if not nombre:
+            raise PanelError(400, "el control necesita un nombre")
+        with self._lock:
+            on = self._cmd_catalogo(data.get("on_id"))
+            off = self._cmd_catalogo(data.get("off_id"))
+            if on["id"] == off["id"] or on["trama"] == off["trama"]:
+                raise PanelError(400, "encendido y apagado tienen que ser comandos distintos")
+            par = self._buscar_flujo("pares", data.get("id"))
+            if par is None:
+                self.flujo["seq"] = int(self.flujo.get("seq") or 0) + 1
+                par = {"id": f"p{self.flujo['seq']}"}
+                self.flujo["pares"].append(par)
+            par["nombre"] = nombre
+            par["on_id"] = on["id"]
+            par["off_id"] = off["id"]
+            self._guardar_flujo()
+            return self._flujo_pub()
+
+    def quitar_par(self, ident):
+        with self._lock:
+            pares = [p for p in self.flujo["pares"] if p.get("id") != ident]
+            if len(pares) == len(self.flujo["pares"]):
+                raise PanelError(404, "no está ese control")
+            self.flujo["pares"] = pares
+            self._guardar_flujo()
+            return self._flujo_pub()
+
+    def accionar_par(self, ident, accion, segundos=None, ip=None):
+        accion = str(accion or "").strip()
+        if accion not in ("encender", "apagar", "mantener"):
+            raise PanelError(400, "la acción es encender, apagar o mantener")
+        if ip is not None:
+            ip = str(ip).strip() or None
+        with self._lock:
+            par = self._buscar_flujo("pares", ident)
+            if par is None:
+                raise PanelError(404, "no está ese control")
+            on = self._cmd_catalogo(par.get("on_id"))
+            off = self._cmd_catalogo(par.get("off_id"))
+            if accion == "mantener":
+                espera = self._espera_segundos(segundos, "los segundos")
+                if self._par_armado(par["id"]):
+                    raise PanelError(400, "este control ya tiene un apagado pendiente")
+                self._abrir_corrida(
+                    tipo="par",
+                    origen_id=par["id"],
+                    nombre=par["nombre"],
+                    ip=ip,
+                    pedido_s=espera,
+                    pasos=[
+                        self._paso_cmd(on, 0, par["id"], "on"),
+                        self._paso_cmd(off, espera, par["id"], "off"),
+                    ],
+                )
+            elif accion == "encender":
+                if self._par_armado(par["id"]):
+                    raise PanelError(400, "este control ya tiene un apagado pendiente")
+                self._poner_cola(on["trama"], on["titulo"], on.get("grupo") or "", ip)
+            else:
+                if self._par_armado(par["id"]):
+                    raise PanelError(400, "el apagado de este control ya está armado")
+                self._poner_cola(off["trama"], off["titulo"], off.get("grupo") or "", ip, par=par["id"], rol="off")
+            self._guardar_cola()
+            self._guardar_flujo()
+            return self._flujo_pub(ip)
+
+    def guardar_secuencia(self, data):
+        if not isinstance(data, dict):
+            raise PanelError(400, "la secuencia debe ser un objeto")
+        nombre = str(data.get("nombre") or "").strip()[:80]
+        crudos = data.get("pasos")
+        if not nombre:
+            raise PanelError(400, "la secuencia necesita un nombre")
+        if not isinstance(crudos, list) or not crudos or len(crudos) > 20:
+            raise PanelError(400, "la secuencia lleva entre 1 y 20 pasos")
+        with self._lock:
+            pasos = []
+            for crudo in crudos:
+                if not isinstance(crudo, dict):
+                    raise PanelError(400, "paso inválido")
+                cmd = self._cmd_catalogo(crudo.get("cmd_id"))
+                espera = self._espera_segundos(crudo.get("espera") or 0, "la espera")
+                par_id, rol = self._rol_de_trama(cmd["trama"])
+                pasos.append({"cmd_id": cmd["id"], "espera": espera, "par": par_id, "rol": rol})
+            sec = self._buscar_flujo("secuencias", data.get("id"))
+            if sec is None:
+                self.flujo["seq"] = int(self.flujo.get("seq") or 0) + 1
+                sec = {"id": f"s{self.flujo['seq']}"}
+                self.flujo["secuencias"].append(sec)
+            sec["nombre"] = nombre
+            sec["pasos"] = pasos
+            self._guardar_flujo()
+            return self._flujo_pub()
+
+    def quitar_secuencia(self, ident):
+        with self._lock:
+            if any(r.get("secuencia_id") == ident for r in self.flujo["reglas"]):
+                raise PanelError(400, "hay una regla que usa esta secuencia")
+            secs = [s for s in self.flujo["secuencias"] if s.get("id") != ident]
+            if len(secs) == len(self.flujo["secuencias"]):
+                raise PanelError(404, "no está esa secuencia")
+            self.flujo["secuencias"] = secs
+            self._guardar_flujo()
+            return self._flujo_pub()
+
+    def lanzar_secuencia(self, ident, ip=None, regla_id=None):
+        if ip is not None:
+            ip = str(ip).strip() or None
+        with self._lock:
+            self._lanzar_secuencia_locked(ident, ip, regla_id)
+            self._guardar_cola()
+            self._guardar_flujo()
+            return self._flujo_pub(ip)
+
+    def guardar_regla(self, data):
+        if not isinstance(data, dict):
+            raise PanelError(400, "la regla debe ser un objeto")
+        nombre = str(data.get("nombre") or "").strip()[:80]
+        modo = str(data.get("modo") or "entrar").strip()
+        if not nombre:
+            raise PanelError(400, "la regla necesita un nombre")
+        if modo not in ("entrar", "seguir"):
+            raise PanelError(400, "el modo es entrar o seguir")
+        crudas = data.get("condiciones")
+        if not isinstance(crudas, list) or not crudas or len(crudas) > 6:
+            raise PanelError(400, "la regla lleva entre 1 y 6 condiciones")
+        condiciones = []
+        for cruda in crudas:
+            if not isinstance(cruda, dict):
+                raise PanelError(400, "condición inválida")
+            try:
+                zona = int(cruda.get("zona") or 0)
+            except (TypeError, ValueError):
+                raise PanelError(400, "la condición usa zona 1 a 3 y gas co2 u o2")
+            gas = str(cruda.get("gas") or "").strip()
+            if zona not in (1, 2, 3) or gas not in ("co2", "o2"):
+                raise PanelError(400, "la condición usa zona 1 a 3 y gas co2 u o2")
+            desde = _num(cruda.get("desde"))
+            hasta = _num(cruda.get("hasta"))
+            if desde is None or hasta is None or desde > hasta or desde < 0 or hasta > 100:
+                raise PanelError(400, "el rango va de 0 a 100, con desde menor o igual que hasta")
+            condiciones.append({"zona": zona, "gas": gas, "desde": desde, "hasta": hasta})
+        with self._lock:
+            if self._buscar_flujo("secuencias", data.get("secuencia_id")) is None:
+                raise PanelError(400, "esa secuencia no está")
+            regla = self._buscar_flujo("reglas", data.get("id"))
+            if regla is None:
+                self.flujo["seq"] = int(self.flujo.get("seq") or 0) + 1
+                regla = {
+                    "id": f"r{self.flujo['seq']}",
+                    "activa": False,
+                    "dentro_seguidas": 0,
+                    "dentro": False,
+                    "ultima_fin": None,
+                }
+                self.flujo["reglas"].append(regla)
+            elif "activa" not in data:
+                pass
+            regla["nombre"] = nombre
+            regla["modo"] = modo
+            regla["secuencia_id"] = data.get("secuencia_id")
+            regla["condiciones"] = condiciones
+            if "activa" in data:
+                regla["activa"] = bool(data.get("activa"))
+            self._guardar_flujo()
+            return self._flujo_pub()
+
+    def quitar_regla(self, ident):
+        with self._lock:
+            reglas = [r for r in self.flujo["reglas"] if r.get("id") != ident]
+            if len(reglas) == len(self.flujo["reglas"]):
+                raise PanelError(404, "no está esa regla")
+            self.flujo["reglas"] = reglas
+            self._guardar_flujo()
+            return self._flujo_pub()
 
     def observar_serial(self, ip, texto, flujo="in", cuando=None):
         """Anota un comando de Starcool, inyector o válvulas y la respuesta que le sigue."""
@@ -910,6 +1107,7 @@ class Panel:
         if nums_r and marca is not None and 0 <= (cuando - marca).total_seconds() <= 15:
             rec["r"] = [_num(v) for v in nums_r[:16]]
         self._append_lectura(rec)
+        self._evaluar_reglas(est)
 
     def _append_lectura(self, rec):
         dia = _parse_iso(rec["t"])
@@ -1084,6 +1282,7 @@ class Panel:
                 continue
             item["ack"] = texto
             item["ack_en"] = cuando.isoformat(timespec="seconds")
+            self._anotar_respuesta_corrida(item, texto, cuando)
             self._guardar_cola()
             return
 
@@ -1095,11 +1294,15 @@ class Panel:
             dest = item.get("ip_envio") or item.get("ip")
             if dest in (None, ip):
                 return None
+        momento = ahora()
         for item in self._cola:
             if item.get("estado") != 1:
                 continue
             dest = item.get("ip")
             if dest and dest != ip:
+                continue
+            desde = _parse_iso(item.get("disponible_desde"))
+            if desde is not None and momento < desde:
                 continue
             item["estado"] = 4
             item["ip_envio"] = ip
@@ -1321,6 +1524,357 @@ class Panel:
             "comandos": json.loads(json.dumps(self.config["comandos"])),
         }
 
+    def _cargar_flujo(self):
+        data = _leer_json(self.ruta_flujo) or {}
+        data.setdefault("seq", 0)
+        data.setdefault("pares", [])
+        data.setdefault("secuencias", [])
+        data.setdefault("reglas", [])
+        data.setdefault("corridas", [])
+        return data
+
+    def _guardar_flujo(self):
+        _atomic_json(self.ruta_flujo, self.flujo)
+
+    def _buscar_flujo(self, clave, ident):
+        if not ident:
+            return None
+        for item in self.flujo.get(clave) or []:
+            if item.get("id") == ident:
+                return item
+        return None
+
+    def _cmd_catalogo(self, ident):
+        for cmd in self.config.get("comandos") or []:
+            if cmd.get("id") == ident:
+                return cmd
+        raise PanelError(400, "ese comando ya no está en el catálogo")
+
+    def _espera_segundos(self, valor, nombre):
+        n = _num(valor)
+        if n is None or n < 0 or n > 86400:
+            raise PanelError(400, f"{nombre} van de 0 a 86400")
+        return round(n, 3)
+
+    def _rol_de_trama(self, trama):
+        for par in self.flujo["pares"]:
+            try:
+                on = self._cmd_catalogo(par.get("on_id"))
+                off = self._cmd_catalogo(par.get("off_id"))
+            except PanelError:
+                continue
+            if trama == off["trama"]:
+                return par["id"], "off"
+            if trama == on["trama"]:
+                return par["id"], "on"
+        return None, None
+
+    def _par_armado(self, par_id):
+        for corrida in self.flujo["corridas"]:
+            if corrida.get("estado") != "activa":
+                continue
+            for paso in corrida.get("pasos") or []:
+                if paso.get("par") == par_id and paso.get("rol") == "off" and not paso.get("enviado"):
+                    return True
+        return False
+
+    def _paso_cmd(self, cmd, espera, par_id, rol):
+        return {
+            "trama": cmd["trama"],
+            "titulo": cmd.get("titulo") or cmd["trama"],
+            "grupo": cmd.get("grupo") or "",
+            "espera": espera,
+            "par": par_id,
+            "rol": rol,
+            "disponible_desde": None,
+            "enviado": None,
+            "segundos": None,
+            "respuesta": None,
+            "respuesta_en": None,
+            "cola_id": None,
+        }
+
+    def _poner_cola(self, trama, titulo, grupo, ip, disponible_desde=None, par=None, rol=None, corrida=None, paso=None):
+        self._seq += 1
+        item = {
+            "id": f"q{self._seq}",
+            "titulo": titulo,
+            "descripcion": "",
+            "trama": trama,
+            "grupo": grupo or "",
+            "ip": ip,
+            "estado": 1,
+            "creado": ahora().isoformat(timespec="seconds"),
+            "enviado": None,
+            "ack": None,
+            "error": None,
+            "intentos": 0,
+            "disponible_desde": disponible_desde,
+            "par": par,
+            "rol": rol,
+            "corrida": corrida,
+            "paso": paso,
+        }
+        self._cola.append(item)
+        return item
+
+    def _abrir_corrida(self, tipo, origen_id, nombre, ip, pasos, pedido_s=None, regla_id=None):
+        self.flujo["seq"] = int(self.flujo.get("seq") or 0) + 1
+        ident = f"k{self.flujo['seq']}"
+        numerados = []
+        for i, paso in enumerate(pasos, 1):
+            paso = dict(paso)
+            paso["n"] = i
+            numerados.append(paso)
+        corrida = {
+            "id": ident,
+            "tipo": tipo,
+            "origen_id": origen_id,
+            "nombre": nombre,
+            "ip": ip,
+            "regla_id": regla_id,
+            "pedido_s": pedido_s,
+            "estado": "activa",
+            "creado": ahora().isoformat(timespec="seconds"),
+            "fin": None,
+            "pasos": numerados,
+        }
+        self.flujo["corridas"].append(corrida)
+        activas = [c for c in self.flujo["corridas"] if c.get("estado") == "activa"]
+        hechas = [c for c in self.flujo["corridas"] if c.get("estado") != "activa"]
+        self.flujo["corridas"] = activas + hechas[-200:]
+        primero = numerados[0]
+        puesto = self._poner_cola(
+            primero["trama"], primero["titulo"], primero.get("grupo") or "", ip,
+            par=primero.get("par"), rol=primero.get("rol"), corrida=ident, paso=1,
+        )
+        primero["cola_id"] = puesto["id"]
+        return corrida
+
+    def _lanzar_secuencia_locked(self, ident, ip, regla_id=None):
+        sec = self._buscar_flujo("secuencias", ident)
+        if sec is None:
+            raise PanelError(404, "no está esa secuencia")
+        pasos = []
+        for crudo in sec.get("pasos") or []:
+            cmd = self._cmd_catalogo(crudo.get("cmd_id"))
+            par_id, rol = self._rol_de_trama(cmd["trama"])
+            if rol == "on" and par_id and self._par_armado(par_id):
+                raise PanelError(400, "este control ya tiene un apagado pendiente")
+            pasos.append(self._paso_cmd(cmd, crudo.get("espera") or 0, par_id, rol))
+        if not pasos:
+            raise PanelError(400, "la secuencia no tiene pasos")
+        return self._abrir_corrida("secuencia", sec["id"], sec["nombre"], ip, pasos, regla_id=regla_id)
+
+    def _corrida_de(self, ident):
+        for corrida in self.flujo["corridas"]:
+            if corrida.get("id") == ident:
+                return corrida
+        return None
+
+    def _avanzar_corrida(self, item):
+        corrida = self._corrida_de(item.get("corrida"))
+        if corrida is None or corrida.get("estado") != "activa":
+            return
+        paso = next((p for p in corrida["pasos"] if p.get("n") == item.get("paso")), None)
+        if paso is None:
+            return
+        paso["enviado"] = item.get("enviado")
+        paso["cola_id"] = item.get("id")
+        previos = [p for p in corrida["pasos"] if p.get("n") < paso["n"] and p.get("enviado")]
+        if previos:
+            anterior = _parse_iso(previos[-1]["enviado"])
+            actual = _parse_iso(paso["enviado"])
+            if anterior and actual:
+                paso["segundos"] = round((actual - anterior).total_seconds(), 3)
+        siguiente = next((p for p in corrida["pasos"] if p.get("n") == paso["n"] + 1), None)
+        if siguiente is None:
+            self._marcar_corrida(corrida["id"], "cerrada", None, item.get("enviado"))
+            return
+        marca = _parse_iso(item.get("enviado")) or ahora()
+        cuando = marca + datetime.timedelta(seconds=float(siguiente.get("espera") or 0))
+        siguiente["disponible_desde"] = cuando.isoformat(timespec="seconds")
+        puesto = self._poner_cola(
+            siguiente["trama"], siguiente["titulo"], siguiente.get("grupo") or "", corrida.get("ip"),
+            disponible_desde=siguiente["disponible_desde"],
+            par=siguiente.get("par"), rol=siguiente.get("rol"),
+            corrida=corrida["id"], paso=siguiente["n"],
+        )
+        siguiente["cola_id"] = puesto["id"]
+        self._guardar_flujo()
+
+    def _anotar_respuesta_corrida(self, item, texto, cuando):
+        corrida = self._corrida_de(item.get("corrida"))
+        if corrida is None:
+            return
+        for paso in corrida.get("pasos") or []:
+            if paso.get("n") == item.get("paso"):
+                paso["respuesta"] = texto
+                paso["respuesta_en"] = cuando.isoformat(timespec="seconds")
+                self._guardar_flujo()
+                return
+
+    def _marcar_corrida(self, ident, estado, motivo, fin=None):
+        corrida = self._corrida_de(ident)
+        if corrida is None or corrida.get("estado") != "activa":
+            return
+        corrida["estado"] = estado
+        corrida["fin"] = fin or ahora().isoformat(timespec="seconds")
+        if motivo:
+            corrida["motivo"] = motivo
+        if corrida.get("regla_id") and estado == "cerrada":
+            regla = self._buscar_flujo("reglas", corrida["regla_id"])
+            if regla is not None:
+                regla["ultima_fin"] = corrida["fin"]
+        self._guardar_flujo()
+
+    def _evaluar_reglas(self, est):
+        if not self.flujo.get("reglas"):
+            return
+        cambio = False
+        for regla in self.flujo["reglas"]:
+            if not regla.get("activa"):
+                continue
+            estado = self._estado_regla(est, regla)
+            if estado is None:
+                continue
+            if not estado:
+                if regla.get("dentro") or regla.get("dentro_seguidas"):
+                    cambio = True
+                regla["dentro"] = False
+                regla["dentro_seguidas"] = 0
+                continue
+            seguidas = int(regla.get("dentro_seguidas") or 0) + 1
+            if seguidas != regla.get("dentro_seguidas"):
+                cambio = True
+            regla["dentro_seguidas"] = seguidas
+            if seguidas < 2:
+                continue
+            if regla.get("modo") == "seguir":
+                if self._corrida_regla_activa(regla["id"]):
+                    continue
+                ultima = _parse_iso(regla.get("ultima_fin"))
+                if ultima and (ahora() - ultima).total_seconds() < PAUSA_REGLA:
+                    continue
+            elif regla.get("dentro"):
+                continue
+            try:
+                self._lanzar_secuencia_locked(regla.get("secuencia_id"), est.get("ip"), regla["id"])
+            except PanelError:
+                continue
+            regla["dentro"] = True
+            cambio = True
+            self._guardar_cola()
+        if cambio:
+            self._guardar_flujo()
+
+    def _estado_regla(self, est, regla):
+        """True dentro, False fuera, None si falta una lectura real en esta consulta."""
+        celdas = est.get("celdas") or []
+        for cond in regla.get("condiciones") or []:
+            idx = (0 if cond.get("gas") == "co2" else 3) + int(cond.get("zona") or 1) - 1
+            if idx < 0 or idx >= len(celdas):
+                return None
+            celda = celdas[idx]
+            if celda.get("valor") is None or es_reinicio(celda.get("crudo")):
+                return None
+            valor = celda["valor"]
+            if valor < cond["desde"] or valor > cond["hasta"]:
+                return False
+        return True
+
+    def _corrida_regla_activa(self, regla_id):
+        return any(c.get("estado") == "activa" and c.get("regla_id") == regla_id for c in self.flujo["corridas"])
+
+    def _lecturas_vigentes(self, ip):
+        est = self._elegir(ip)
+        if est is None:
+            return []
+        salida = []
+        celdas = est.get("celdas") or []
+        for zona in (1, 2, 3):
+            for gas in ("co2", "o2"):
+                idx = (0 if gas == "co2" else 3) + zona - 1
+                celda = celdas[idx] if idx < len(celdas) else {}
+                salida.append({
+                    "zona": zona,
+                    "gas": gas,
+                    "valor": celda.get("valor"),
+                    "reinicio": bool(celda.get("reinicio")),
+                })
+        return salida
+
+    def _flujo_pub(self, ip=None, inicio=None, fin=None, origen=None, aviso=None):
+        if inicio is None:
+            inicio, fin, aviso = _rango_busqueda(ahora().date().isoformat(), ahora().date().isoformat())
+        lecturas = self._lecturas_vigentes(ip)
+        vigentes = {(x["zona"], x["gas"]): x.get("valor") for x in lecturas}
+        corridas = []
+        for corrida in self.flujo["corridas"]:
+            if origen and corrida.get("origen_id") != origen and corrida.get("id") != origen:
+                continue
+            if not _dentro(corrida.get("creado"), inicio, fin):
+                continue
+            corridas.append(self._corrida_pub(corrida))
+        corridas.sort(key=lambda c: c.get("creado") or "", reverse=True)
+        reglas = []
+        for regla in self.flujo["reglas"]:
+            pub = json.loads(json.dumps(regla))
+            pub["ahora"] = self._ahora_regla(regla, vigentes)
+            reglas.append(pub)
+        return {
+            "aviso": aviso,
+            "pares": json.loads(json.dumps(self.flujo["pares"])),
+            "secuencias": json.loads(json.dumps(self.flujo["secuencias"])),
+            "reglas": reglas,
+            "corridas": corridas,
+            "lecturas": lecturas,
+            "comandos": json.loads(json.dumps(self.config.get("comandos") or [])),
+        }
+
+    def _ahora_regla(self, regla, vigentes):
+        if not regla.get("condiciones"):
+            return "sin lectura"
+        for cond in regla["condiciones"]:
+            valor = vigentes.get((cond["zona"], cond["gas"]))
+            if valor is None:
+                return "sin lectura"
+            if valor < cond["desde"] or valor > cond["hasta"]:
+                return "fuera"
+        return "dentro"
+
+    def _corrida_pub(self, corrida):
+        pasos = []
+        for paso in corrida.get("pasos") or []:
+            pasos.append({
+                "n": paso.get("n"),
+                "titulo": paso.get("titulo"),
+                "trama": paso.get("trama"),
+                "espera": paso.get("espera") or 0,
+                "rol": paso.get("rol"),
+                "disponible_desde": paso.get("disponible_desde"),
+                "disponible_display": fmt_fecha(_parse_iso(paso.get("disponible_desde"))),
+                "enviado": paso.get("enviado"),
+                "enviado_display": fmt_fecha(_parse_iso(paso.get("enviado"))),
+                "segundos": paso.get("segundos"),
+                "respuesta": paso.get("respuesta"),
+                "respuesta_display": fmt_fecha(_parse_iso(paso.get("respuesta_en"))),
+            })
+        return {
+            "id": corrida.get("id"),
+            "tipo": corrida.get("tipo"),
+            "origen_id": corrida.get("origen_id"),
+            "nombre": corrida.get("nombre"),
+            "ip": corrida.get("ip"),
+            "pedido_s": corrida.get("pedido_s"),
+            "estado": corrida.get("estado"),
+            "motivo": corrida.get("motivo"),
+            "creado": corrida.get("creado"),
+            "creado_display": fmt_fecha(_parse_iso(corrida.get("creado"))),
+            "fin": corrida.get("fin"),
+            "pasos": pasos,
+        }
+
     def _item_pub(self, item):
         return {
             "id": item.get("id"),
@@ -1341,6 +1895,10 @@ class Panel:
             "ip_envio": item.get("ip_envio") or item.get("ip"),
             "error": item.get("error"),
             "intentos": item.get("intentos") or 0,
+            "disponible_desde": item.get("disponible_desde"),
+            "disponible_display": fmt_fecha(_parse_iso(item.get("disponible_desde"))),
+            "corrida": item.get("corrida"),
+            "rol": item.get("rol"),
         }
 
     def _validar_trama(self, trama):
@@ -2294,10 +2852,97 @@ def _test_importar(tmp):
         assert e.status == 400
 
 
+def _test_flujo(tmp):
+    p = Panel(tmp)
+    ip = "10.0.0.8"
+    cmds = {c["trama"]: c["id"] for c in p.config["comandos"]}
+    pub = p.guardar_par({
+        "nombre": "Compresor 222",
+        "on_id": cmds["STARCOOL:CMP222_ON"],
+        "off_id": cmds["STARCOOL:CMP222_OFF"],
+    })
+    par = pub["pares"][0]["id"]
+    p.accionar_par(par, "mantener", 22, ip)
+    primero = p.tomar_ventana(ip)
+    assert primero["trama"] == "STARCOOL:CMP222_ON"
+    assert p.tomar_ventana(ip) is None
+    p.confirmar(primero["id"], ok=True)
+    try:
+        p.accionar_par(par, "encender", ip=ip)
+        raise AssertionError("debio reservar el par")
+    except PanelError as e:
+        assert e.status == 400
+    off = next(x for x in p._cola if x.get("rol") == "off" and x.get("estado") == 1)
+    pedido = _parse_iso(off["disponible_desde"]) - _parse_iso(p._buscar(primero["id"])["enviado"])
+    assert 21 <= pedido.total_seconds() <= 23
+    assert p.tomar_ventana(ip) is None
+    libre = p.encolar("INYECTOR:ESTADO?", titulo="Pedir estado", ip=ip)
+    assert p.tomar_ventana(ip)["id"] == libre["id"]
+    p.confirmar(libre["id"], ok=True)
+    p.linea(ip, "INYECTOR_OK")
+    try:
+        p.cancelar(off["id"])
+        raise AssertionError("el apagado armado no se cancela")
+    except PanelError as e:
+        assert e.status == 400
+    off["disponible_desde"] = (ahora() - datetime.timedelta(seconds=1)).isoformat(timespec="seconds")
+    corrida = next(c for c in p.flujo["corridas"] if c["estado"] == "activa")
+    corrida["pasos"][0]["enviado"] = (ahora() - datetime.timedelta(seconds=22)).isoformat(timespec="seconds")
+    salio = p.tomar_ventana(ip)
+    assert salio["trama"] == "STARCOOL:CMP222_OFF"
+    p.confirmar(salio["id"], ok=True)
+    p.linea(ip, "STARCOOL_OK")
+    cerrada = p.flujo_publico(ip)["corridas"][0]
+    assert cerrada["estado"] == "cerrada"
+    assert cerrada["pedido_s"] == 22
+    assert 21 <= cerrada["pasos"][1]["segundos"] <= 23
+    assert cerrada["pasos"][1]["respuesta"] == "STARCOOL_OK"
+    sec = p.guardar_secuencia({
+        "nombre": "Nitrógeno",
+        "pasos": [
+            {"cmd_id": cmds["INYECTOR:VALNITRO111"], "espera": 0},
+            {"cmd_id": cmds["INYECTOR:ESTADO?"], "espera": 22},
+        ],
+    })
+    p.lanzar_secuencia(sec["secuencias"][0]["id"], ip)
+    paso = p.tomar_ventana(ip)
+    assert paso["trama"] == "INYECTOR:VALNITRO111"
+    p.confirmar(paso["id"], ok=True)
+    assert p.tomar_ventana(ip) is None
+    regla = p.guardar_regla({
+        "nombre": "CO₂ zona 1",
+        "secuencia_id": sec["secuencias"][0]["id"],
+        "modo": "entrar",
+        "condiciones": [{"zona": 1, "gas": "co2", "desde": 7, "hasta": 9}],
+        "activa": False,
+    })
+    assert regla["reglas"][0]["activa"] is False
+    p.linea(ip, "STARCOOL_CONSULTA:8.0,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    p.linea(ip, "STARCOOL_CONSULTA:8.1,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    assert all(c.get("regla_id") is None or c.get("estado") != "activa" for c in p.flujo["corridas"])
+    p.guardar_regla({
+        "id": regla["reglas"][0]["id"],
+        "nombre": "CO₂ zona 1",
+        "secuencia_id": sec["secuencias"][0]["id"],
+        "modo": "entrar",
+        "condiciones": [{"zona": 1, "gas": "co2", "desde": 7, "hasta": 9}],
+        "activa": True,
+    })
+    p.linea(ip, "STARCOOL_CONSULTA:8.0,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    assert not any(c.get("regla_id") for c in p.flujo["corridas"] if c.get("estado") == "activa")
+    p.linea(ip, "STARCOOL_CONSULTA:0,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    assert not any(c.get("regla_id") for c in p.flujo["corridas"] if c.get("estado") == "activa")
+    p.linea(ip, "STARCOOL_CONSULTA:8.2,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    assert any(c.get("regla_id") and c.get("estado") == "activa" for c in p.flujo["corridas"])
+    antes = len([c for c in p.flujo["corridas"] if c.get("regla_id")])
+    p.linea(ip, "STARCOOL_CONSULTA:8.2,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
+    assert len([c for c in p.flujo["corridas"] if c.get("regla_id")]) == antes
+
+
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

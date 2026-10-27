@@ -1123,7 +1123,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "rol": _rol_de(self),
             })
             return
-        if not _es_admin(self) and ruta in ("/historial-comandos", "/archivos", "/usuarios", "/comandos", "/config", "/dispositivos", "/cerro"):
+        if not _es_admin(self) and ruta in ("/historial-comandos", "/archivos", "/usuarios", "/comandos", "/config", "/dispositivos", "/cerro", "/flujo"):
             self._json(403, {"ok": False, "detalle": "esta cuenta solo puede ver el panel"})
             return
         if ruta == "/":
@@ -1212,6 +1212,21 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(200, {"archivos": listar_capturas()})
         elif ruta == "/usuarios":
             self._json(200, {"ok": True, "usuarios": [_usuario_publico(item) for item in _cargar_usuarios()]})
+        elif ruta == "/flujo":
+            consulta = parse_qs(urlparse(self.path).query)
+            hoy = ahora().date().isoformat()
+            desde = (consulta.get("desde") or [hoy])[0]
+            hasta = (consulta.get("hasta") or [hoy])[0]
+            ip = (consulta.get("ip") or [None])[0]
+            origen = (consulta.get("origen") or [None])[0]
+            if ip:
+                ip = ip.strip() or None
+            if origen:
+                origen = origen.strip() or None
+            try:
+                self._json(200, {"ok": True, **panel.flujo_publico(ip, desde, hasta, origen)})
+            except PanelError as e:
+                self._json(e.status, {"ok": False, "detalle": e.detalle})
         else:
             self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
 
@@ -1318,6 +1333,27 @@ class ApiHandler(BaseHTTPRequestHandler):
                 data = self._cuerpo_json()
                 cuentas = _quitar_usuario(data.get("usuario"))
                 self._json(200, {"ok": True, "usuarios": cuentas})
+            elif ruta == "/flujo/par":
+                self._json(200, {"ok": True, **panel.guardar_par(self._cuerpo_json())})
+            elif ruta == "/flujo/par/quitar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.quitar_par(data.get("id"))})
+            elif ruta == "/flujo/par/accionar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.accionar_par(data.get("id"), data.get("accion"), data.get("segundos"), data.get("ip"))})
+            elif ruta == "/flujo/secuencia":
+                self._json(200, {"ok": True, **panel.guardar_secuencia(self._cuerpo_json())})
+            elif ruta == "/flujo/secuencia/quitar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.quitar_secuencia(data.get("id"))})
+            elif ruta == "/flujo/secuencia/lanzar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.lanzar_secuencia(data.get("id"), data.get("ip"))})
+            elif ruta == "/flujo/regla":
+                self._json(200, {"ok": True, **panel.guardar_regla(self._cuerpo_json())})
+            elif ruta == "/flujo/regla/quitar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.quitar_regla(data.get("id"))})
             else:
                 self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:
