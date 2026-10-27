@@ -26,6 +26,10 @@ NOMBRE_LOG = re.compile(
 MARCA_LOG = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s?(.*)$")
 BITMAP = re.compile(r"INYECTOR:([01]{8,})(?:,(.*))?$")
 ACKS = {"STARCOOL_OK", "INYECTOR_OK", "REEFER_CAMBIO_OK"}
+# Tras una respuesta completa el equipo calla ~2 s. Se espera un poco para no
+# cortar una trama que llega partida, y más si RIPENER o el reefer siguen abiertos.
+ESPERA_VENTANA = 0.4
+ESPERA_BLOQUE = 1.15
 # Consultas que el equipo repite en cada ciclo. No son comandos.
 CICLO_REGULAR = {
     "STARCOOL:QUEST",
@@ -50,7 +54,7 @@ USOS = {
 }
 ORDEN_VALVULAS = (4, 5, 6, 9, 8, 7, 14)
 PASOS = (
-    ("STARCOOL:PLATAFORMA", "ventana"),
+    ("STARCOOL:PLATAFORMA", "plataforma"),
     ("RIPENER:PLATAFORMA", "ripener_plataforma"),
     ("STARCOOL_CONSULTA:", "consulta"),
     ("STARCOOL:QUEST", "consulta"),
@@ -494,7 +498,7 @@ class Panel:
         self._restaurar_comandos()
 
     def linea(self, ip, texto, cuando=None):
-        """Incorpora una trama entrante. Si es la ventana, devuelve el comando a enviar."""
+        """Incorpora una trama entrante. El envío se decide después, en el hueco."""
         cuando = cuando or ahora()
         with self._lock:
             est = self._ips.get(ip)
@@ -503,9 +507,22 @@ class Panel:
                 self._ips[ip] = est
             self._consumir(est, texto, cuando)
             self._persist_vivo()
-            if texto == "STARCOOL:PLATAFORMA":
-                return self._tomar(ip)
         return None
+
+    def espera_ventana(self, ip, texto):
+        """Segundos de silencio antes de soltar un comando, o None si esta línea no abre hueco."""
+        t = str(texto or "").strip()
+        if not t or t in ACKS or t.startswith(tuple(ACKS)):
+            return None
+        with self._lock:
+            est = self._ips.get(ip)
+            abierto = bool(est and est.get("bloque") in ("ripener", "reefer"))
+        return ESPERA_BLOQUE if abierto else ESPERA_VENTANA
+
+    def tomar_ventana(self, ip):
+        """Saca el siguiente comando pendiente para esta IP. Uno por hueco."""
+        with self._lock:
+            return self._tomar(ip)
 
     def confirmar(self, ident, ok, error=None):
         with self._lock:
@@ -1072,6 +1089,12 @@ class Panel:
 
     def _tomar(self, ip):
         self._reanimar()
+        for item in self._cola:
+            if item.get("estado") != 4:
+                continue
+            dest = item.get("ip_envio") or item.get("ip")
+            if dest in (None, ip):
+                return None
         for item in self._cola:
             if item.get("estado") != 1:
                 continue
@@ -2093,28 +2116,36 @@ def _test_cola(tmp):
     p = Panel(tmp)
     ip = "10.0.0.8"
     assert p.linea(ip, "STARCOOL:PLATAFORMA") is None
+    assert p.espera_ventana(ip, "STARCOOL:PLATAFORMA") == ESPERA_VENTANA
     p.encolar("STARCOOL:ZONA222", titulo="Zona 222", ip=ip)
     p.encolar("STARCOOL:SLEEP", titulo="Sleep", ip=ip)
     assert p.linea(ip, "RIPENER:PLATAFORMA") is None
-    primero = p.linea(ip, "STARCOOL:PLATAFORMA")
+    primero = p.tomar_ventana(ip)
     assert primero["trama"] == "STARCOOL:ZONA222"
+    assert p.tomar_ventana(ip) is None
     p.confirmar(primero["id"], ok=True)
     p.linea(ip, "STARCOOL_OK")
+    assert p.espera_ventana(ip, "STARCOOL_OK") is None
     recientes = p.cola_publica()["recientes"]
     assert recientes[0]["estado"] == 0
     assert recientes[0]["ack"] == "STARCOOL_OK"
     assert recientes[0]["recibido"] is True
     assert recientes[0]["ack_en_display"]
-    segundo = p.linea(ip, "STARCOOL:PLATAFORMA")
+    p.linea(ip, "INYECTOR:0000111111100000,1")
+    segundo = p.tomar_ventana(ip)
     assert segundo["trama"] == "STARCOOL:SLEEP"
     p.confirmar(segundo["id"], ok=False, error="socket")
-    otro = p.linea("10.9.9.9", "STARCOOL:PLATAFORMA")
+    otro = p.tomar_ventana("10.9.9.9")
     assert otro is None
     libre = p.encolar("INYECTOR:&O0", titulo="Electro")
-    assert p.linea("10.9.9.9", "STARCOOL:PLATAFORMA")["trama"] == "INYECTOR:&O0"
+    assert p.tomar_ventana("10.9.9.9")["trama"] == "INYECTOR:&O0"
     p.cancelar(p.encolar("STARCOOL:ZONA111", titulo="Zona 111", ip=ip)["id"])
     assert all(x["trama"] != "STARCOOL:ZONA111" for x in p.cola_publica()["recientes"])
-    salio = p.linea(ip, "STARCOOL:PLATAFORMA")
+    p.linea(ip, "REEFER:QUEST")
+    p.linea(ip, "REEFER_QUEST:")
+    p.linea(ip, "1,4.0,3.9,6.6,0.6,38.0")
+    assert p.espera_ventana(ip, "1,4.0,3.9,6.6,0.6,38.0") == ESPERA_BLOQUE
+    salio = p.tomar_ventana(ip)
     assert salio["trama"] == "STARCOOL:SLEEP"
     p.confirmar(salio["id"], ok=True)
     for item in p._cola:

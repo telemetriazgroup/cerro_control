@@ -239,6 +239,8 @@ RIPENER:0,20.0,25.1,25.6,25.7,26.4,27.6,0.0,0.0,0.0,66,0,0.0,20.7,90.0,38.5,0,0.
 15:12:37  190.223.54.2  +HTTPREAD: 37
 15:12:37  190.223.54.2  {"comando":"sin comandos pendientes"}
 15:12:37  190.223.54.2  OK
+
+
 15:12:39  190.223.54.2  SERVIDOR:CO2_1:6.00,CO2_2:5.00,CO2_3:8.00,O2_1:4.00,O2_2:10.00,O2_3:12.00,H_1:95.00,H_2:95.00,H_3:95.00
 15:12:41  190.223.54.2  RIPENER:QUEST
 15:12:41  190.223.54.2  RIPENER:
@@ -261,6 +263,29 @@ RIPENER:0,20.0,25.1,25.6,25.7,26.4,27.6,0.0,0.0,0.0,66,0,0.0,20.7,90.0,38.5,0,0.
 15:12:53  190.223.54.2  RIPENER:PLATAFORMA
 15:12:55  190.223.54.2  STARCOOL:PLATAFORMA
 15:12:58  190.223.54.2  SERVIDOR:CO2_1:6.00,CO2_2:5.00,CO2_3:8.00,O2_1:4.00,O2_2:10.00,O2_3:12.00,H_1:95.00,H_2:95.00,H_3:95.00
+
+
+0,20.0,25.1,25.6,25.7,26.4,
+27.6,0.0,0.0,0.0,66,0,
+0.0,20.7,90.0,38.5,0,
+0.3
+
+
+1,4.0,3.9,6.6,0.6,
+38.0,28.3,0.0,0.0,0.0,
+81,0,4.4,0.0,254.0,
+-38.5
+
+power , set point, suministro ,retorno , evaporador,condensador , Sensor 1 , Sensor2 , Sensor 3 , Sensor 4 , Humedad , ventilacion ,co2 sensor , o2 sensor , sp humedad , sp co2 . 
+
+los rangos de datos validos power es 0 apagado , 1 encendido , set point ,suministro , retorno , evaporador , condensador  de -50 a 60 . humedad y sp humedad de 50 a 99 . co2 sensor , o2 sensor y sp co2 sensor de 0 a 24.9
+
+La seccion de REEFER_QUEST contiene informacion de las temperaturas del reefer que funciona en la atmosfera controlada
+
+
+
+
+
 15:12:59  190.223.54.2  RIPENER:QUEST
 15:13:00  190.223.54.2  RIPENER:
 15:13:00  190.223.54.2  0,20.0,25.1,25.6,25.7,26.4

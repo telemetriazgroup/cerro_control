@@ -541,25 +541,64 @@ def _publicar_serial(ip, texto, flujo, tipo):
         print(f"❌ No se pudo anotar el comando {texto!r}: {e}")
 
 
+_ventana_lock = threading.Lock()
+_ventana_gen = {}
+_ventana_timers = {}
+
+
 def _volcar_serial(sesion, chunk, flujo="in"):
     for linea in chunk.splitlines():
         limpia = linea.strip()
         if not limpia:
             continue
         _publicar_serial(sesion.ip, limpia, flujo, sesion.tipo)
-        if flujo != "in":
+        if flujo != "in" or sesion.tipo == "json":
             continue
         try:
-            comando = panel.linea(sesion.ip, limpia)
+            panel.linea(sesion.ip, limpia)
+            espera = panel.espera_ventana(sesion.ip, limpia)
         except Exception as e:
             print(f"❌ No se pudo interpretar {limpia!r}: {e}")
-            comando = None
-        if comando:
-            _despachar_ventana(sesion, comando)
+            espera = None
+        if espera:
+            _programar_ventana(sesion.ip, espera)
+
+
+def _programar_ventana(ip, espera):
+    """Rearma el silencio. Si llega otra línea del mismo grupo, el envío anterior no sale."""
+    with _ventana_lock:
+        gen = _ventana_gen.get(ip, 0) + 1
+        _ventana_gen[ip] = gen
+        previo = _ventana_timers.pop(ip, None)
+        if previo is not None:
+            previo.cancel()
+        timer = threading.Timer(espera, _abrir_ventana, args=(ip, gen))
+        timer.daemon = True
+        _ventana_timers[ip] = timer
+        timer.start()
+
+
+def _abrir_ventana(ip, gen):
+    with _ventana_lock:
+        if _ventana_gen.get(ip) != gen:
+            return
+        _ventana_timers.pop(ip, None)
+    try:
+        comando = panel.tomar_ventana(ip)
+    except Exception as e:
+        print(f"❌ No se pudo tomar el comando de {ip}: {e}")
+        return
+    if not comando:
+        return
+    sesion = _cerro_por_ip.get(ip)
+    if sesion is None:
+        panel.confirmar(comando["id"], ok=False, error="el controlador ya no está conectado")
+        return
+    _despachar_ventana(sesion, comando)
 
 
 def _despachar_ventana(sesion, comando):
-    """Suelta un comando encolado en la ventana que abre STARCOOL:PLATAFORMA."""
+    """Suelta un comando en el hueco de ~2 s que queda entre respuestas."""
     try:
         enviar_trama(comando["trama"], sesion.ip)
     except ErrorComando as e:
@@ -1254,7 +1293,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._json(200, {
                     "ok": True,
                     "encolado": True,
-                    "detalle": "Se envía tras el próximo STARCOOL:PLATAFORMA",
+                    "detalle": "Se envía en el próximo espacio de unos 2 s entre respuestas",
                     **resultado,
                 })
             elif ruta == "/comandos":

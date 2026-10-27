@@ -292,9 +292,9 @@
           <span class="paso" data-paso="salidas">Salidas</span>
           <span class="paso" data-paso="inyector">Inyector</span>
           <span class="paso" data-paso="ripener_plataforma">Ripener plat.</span>
-          <span class="paso ventana" data-paso="ventana">Ventana de comando</span>
+          <span class="paso" data-paso="plataforma">Starcool plat.</span>
         </div>
-        <p class="leyenda" id="paso-texto">El comando encolado sale justo después de STARCOOL:PLATAFORMA.</p>
+        <p class="leyenda" id="paso-texto">Cada respuesta deja unos 2 s libres. El comando encolado sale en ese espacio, uno por vez.</p>
       </section>
       <section class="bloque solo-admin">
         <details class="plegado" id="det-sensores">
@@ -451,9 +451,9 @@
           <div id="horas-graf"></div>
         </div>
       </section>
-      <section class="bloque solo-admin">
+      <section class="bloque">
         <h2>Lecturas del ciclo</h2>
-        <p class="leyenda">Cada fila junta el CO₂ y el O₂ con el reefer de ese ciclo, a la hora de la consulta.</p>
+        <p class="leyenda">La fila de arriba es la más reciente. Cada fila junta el CO₂ y el O₂ con el reefer de ese ciclo, a la hora de la consulta.</p>
         <div class="tabla" id="tabla"></div>
       </section>
     </div>
@@ -496,7 +496,7 @@
     <div id="tab-usuarios" hidden>
       <section class="bloque">
         <h2>Usuarios</h2>
-        <p class="leyenda">El administrador usa todo el panel. Monitoreo ve en vivo las temperaturas, el estado de los objetivos y las zonas de CO₂ y O₂. En el histórico ve las gráficas y puede exportar Excel o PDF.</p>
+        <p class="leyenda">El administrador usa todo el panel. Monitoreo ve en vivo las temperaturas, el estado de los objetivos y las zonas de CO₂ y O₂. En el histórico ve las gráficas, la tabla con lo más reciente arriba y puede exportar Excel o PDF.</p>
         <form id="form-usuario" class="rango">
           <label>Usuario<input id="nuevo-usuario" autocomplete="off" maxlength="32" required></label>
           <label>Contraseña<input id="nuevo-clave" type="password" autocomplete="new-password" minlength="8" required></label>
@@ -516,7 +516,7 @@
     <details id="det-cmd" open>
     <summary id="cmd-titulo">Comandos</summary>
     <div>
-      <p class="leyenda">Se encolan y salen de a uno, después de STARCOOL:PLATAFORMA, en la ventana de 2 a 3 segundos.</p>
+      <p class="leyenda">Se encolan y salen de a uno en cada espacio de unos 2 s entre respuestas, sin cortar la trama que sigue.</p>
       <div id="botones"></div>
     </div>
     <div>
@@ -552,7 +552,7 @@
     <p class="mono" id="modal-trama"></p>
     <p class="leyenda">d02 actual</p>
     <p class="mono" id="modal-d02"></p>
-    <p class="leyenda">Se envía por el serial después del próximo STARCOOL:PLATAFORMA.</p>
+    <p class="leyenda">Se envía por el serial en el próximo espacio de unos 2 s entre respuestas.</p>
     <div class="acciones">
       <button type="button" class="primario" id="modal-ok">Encolar</button>
       <button type="button" id="modal-no">Cerrar</button>
@@ -571,7 +571,7 @@ const PASO_TEXTO = {
   salidas: "STARCOOL_SALIDAS",
   inyector: "INYECTOR",
   ripener_plataforma: "RIPENER:PLATAFORMA",
-  ventana: "Ventana de comando"
+  plataforma: "STARCOOL:PLATAFORMA"
 };
 const COLORES = ["#5eead4", "#fbbf24", "#93c5fd"];
 let desde = 0;
