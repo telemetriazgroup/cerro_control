@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY tcp_cerro_new.py panel_cerro.py interfaz.html login.html ./
+COPY frontend/dist ./frontend/dist
 
 ENV CERRO_DIR=/app/datos \
     CERRO_TCP_PORT=9985 \

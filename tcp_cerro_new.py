@@ -29,6 +29,8 @@ BASE_DIR = os.environ.get("CERRO_DIR", os.getcwd())
 DIR_LOGS = os.environ.get("CERRO_LOGS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "datos")
 MAX_ARCHIVO = 20 * 1024 * 1024
 RUTA_INTERFAZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "interfaz.html")
+RUTA_FRONT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+PREFIJO_FRONT = "/cerroprieto"
 RUTA_LOGIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "login.html")
 USUARIO_PANEL = os.environ.get("CERRO_USER", "").strip() or "zgroup"
 CLAVE_PANEL = os.environ.get("CERRO_PASS", "") or "Proyecto2026!"
@@ -1019,6 +1021,16 @@ def _anotar_fallo(ip):
         _fallos_login.setdefault(ip, []).append(time.monotonic())
 
 
+def _resto_front(ruta):
+    """Ruta dentro de /cerroprieto, o None si no pertenece al frontend."""
+    if ruta == PREFIJO_FRONT:
+        return "/"
+    marca = PREFIJO_FRONT + "/"
+    if ruta.startswith(marca):
+        return "/" + ruta[len(marca):]
+    return None
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1035,14 +1047,30 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _html(self):
+        indice = os.path.join(RUTA_FRONT, "index.html")
+        self._pagina(indice if os.path.isfile(indice) else RUTA_INTERFAZ)
+
+    def _estatico(self, ruta):
+        base = os.path.realpath(RUTA_FRONT)
+        destino = os.path.realpath(os.path.join(base, ruta.lstrip("/")))
+        if not destino.startswith(base + os.sep) or not os.path.isfile(destino):
+            self._json(404, {"ok": False, "detalle": "no está"})
+            return
+        tipo = {
+            ".js": "text/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".svg": "image/svg+xml",
+            ".map": "application/json",
+            ".woff2": "font/woff2",
+        }.get(os.path.splitext(destino)[1], "application/octet-stream")
         try:
-            with open(RUTA_INTERFAZ, encoding="utf-8") as fh:
-                body = fh.read().encode("utf-8")
+            with open(destino, "rb") as fh:
+                body = fh.read()
         except OSError as e:
-            self._json(500, {"ok": False, "detalle": f"sin interfaz: {e}"})
+            self._json(500, {"ok": False, "detalle": f"sin archivo: {e}"})
             return
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", tipo)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -1089,7 +1117,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             _anotar_fallo(ip)
             self._redirigir("/login?e=1")
             return
-        self._redirigir("/", _cabecera_sesion(_abrir_sesion(cuenta["usuario"], cuenta["rol"])))
+        self._redirigir(PREFIJO_FRONT + "/", _cabecera_sesion(_abrir_sesion(cuenta["usuario"], cuenta["rol"])))
 
     def _salir(self):
         _cerrar_sesion(self)
@@ -1103,14 +1131,15 @@ class ApiHandler(BaseHTTPRequestHandler):
         if ruta == "/salud":
             self._json(200, {"ok": True})
             return
-        if ruta == "/login":
+        resto_front = _resto_front(ruta)
+        if ruta == "/login" or resto_front == "/login":
             if _puede_ver(self):
-                self._redirigir("/")
+                self._redirigir(PREFIJO_FRONT + "/")
                 return
             self._pagina(RUTA_LOGIN)
             return
         if not _puede_ver(self):
-            if ruta == "/":
+            if ruta == "/" or resto_front == "/":
                 self._redirigir("/login")
                 return
             self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
@@ -1127,7 +1156,13 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(403, {"ok": False, "detalle": "esta cuenta solo puede ver el panel"})
             return
         if ruta == "/":
+            self._redirigir(PREFIJO_FRONT + "/")
+            return
+        if resto_front == "/":
             self._html()
+            return
+        if resto_front and resto_front.startswith("/assets/"):
+            self._estatico(resto_front)
             return
         if ruta == "/dispositivos":
             self._json(200, {"dispositivos": listar_dispositivos()})
