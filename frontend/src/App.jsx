@@ -118,7 +118,7 @@ export default function App() {
                     <small style={{ display: "block", color: "var(--suave)" }}>{usuario} · {rol ? nombreRol(rol) : ""}</small>
                   </div>
                   <button type="button" onClick={() => { setPerfil(true); setMenu(false); }}>Mi perfil</button>
-                  <button className="salir-rojo" type="button" onClick={async () => { await fetch("/salir", { method: "POST" }); location.href = "/login"; }}>Cerrar sesión</button>
+                  <button className="salir-rojo" type="button" onClick={async () => { await fetch("/salir", { method: "POST" }); location.href = "/cerroprieto/login"; }}>Cerrar sesión</button>
                 </div>
               )}
             </div>
@@ -137,7 +137,7 @@ export default function App() {
           )}
           {!perfil && actual === "vivo" && <Live panel={panel} admin={admin} onAviso={onAviso} onHistorico={() => ir("hist")} />}
           {!perfil && actual === "hist" && <History hoy={snap?.hoy} admin={admin} onAviso={onAviso} />}
-          {!perfil && admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} comandos={snap?.config?.comandos} onAviso={onAviso} />}
+          {!perfil && admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} comandos={snap?.config?.comandos} panel={panel} onAviso={onAviso} />}
           {!perfil && admin && actual === "cmd" && <Comandos comandos={snap?.config?.comandos} cola={snap?.cola} hoy={snap?.hoy} onAviso={onAviso} />}
           {!perfil && admin && actual === "usuarios" && <Usuarios onAviso={onAviso} />}
           {!perfil && admin && actual === "flujo" && <Flujo onAviso={onAviso} />}

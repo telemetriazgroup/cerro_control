@@ -31,6 +31,7 @@ MAX_ARCHIVO = 20 * 1024 * 1024
 RUTA_INTERFAZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "interfaz.html")
 RUTA_FRONT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 PREFIJO_FRONT = "/cerroprieto"
+RUTA_ACCESO = PREFIJO_FRONT + "/login"
 RUTA_LOGIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "login.html")
 USUARIO_PANEL = os.environ.get("CERRO_USER", "").strip() or "zgroup"
 CLAVE_PANEL = os.environ.get("CERRO_PASS", "") or "Proyecto2026!"
@@ -1156,12 +1157,12 @@ class ApiHandler(BaseHTTPRequestHandler):
     def _entrar(self):
         ip = self.client_address[0]
         if _demasiados_intentos(ip):
-            self._redirigir("/login?e=2")
+            self._redirigir(RUTA_ACCESO + "?e=2")
             return
         try:
             crudo = _leer_cuerpo(self)
         except ErrorComando:
-            self._redirigir("/login?e=1")
+            self._redirigir(RUTA_ACCESO + "?e=1")
             return
         datos = parse_qs(crudo, keep_blank_values=True)
         usuario = (datos.get("usuario") or [""])[0]
@@ -1169,13 +1170,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         cuenta = _credenciales_ok(usuario, clave)
         if cuenta is None:
             _anotar_fallo(ip)
-            self._redirigir("/login?e=1")
+            self._redirigir(RUTA_ACCESO + "?e=1")
             return
         self._redirigir(PREFIJO_FRONT + "/", _cabecera_sesion(_abrir_sesion(cuenta["usuario"], cuenta["rol"])))
 
     def _salir(self):
         _cerrar_sesion(self)
-        self._redirigir("/login", _cabecera_cerrar())
+        self._redirigir(RUTA_ACCESO, _cabecera_cerrar())
 
     def _ruta(self):
         return urlparse(self.path).path.rstrip("/") or "/"
@@ -1189,7 +1190,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         if resto_front and resto_front.startswith("/marca/"):
             self._estatico(resto_front)
             return
-        if ruta == "/login" or resto_front == "/login":
+        if ruta == "/login":
+            consulta = urlparse(self.path).query
+            self._redirigir(RUTA_ACCESO + (("?" + consulta) if consulta else ""))
+            return
+        if resto_front == "/login":
             if _puede_ver(self):
                 self._redirigir(PREFIJO_FRONT + "/")
                 return
@@ -1197,7 +1202,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if not _puede_ver(self):
             if ruta == "/" or resto_front == "/":
-                self._redirigir("/login")
+                self._redirigir(RUTA_ACCESO)
                 return
             self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
             return
@@ -1391,7 +1396,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         ruta = self._ruta()
-        if ruta == "/login":
+        if ruta == "/login" or _resto_front(ruta) == "/login":
             self._entrar()
             return
         if ruta == "/salir":

@@ -208,6 +208,22 @@ th { color: var(--suave); font-weight: 600; font-size: 12px; position: sticky; t
   background: #111418; color: #d7dde6; border-radius: 12px; padding: 12px;
   max-height: 420px; overflow: auto; font-size: 12px; line-height: 1.45;
 }
+.tira-estado {
+  display: flex; flex-wrap: nowrap; gap: 6px; align-items: stretch;
+  overflow-x: auto; margin-top: 10px; padding-bottom: 2px;
+}
+.mini-zona { display: flex; gap: 6px; flex: 0 0 auto; }
+.mini-estado {
+  flex: 0 0 auto; min-width: 58px;
+  display: flex; flex-direction: column; justify-content: center;
+  border-radius: 8px; padding: 4px 7px;
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+  line-height: 1.15;
+}
+.mini-estado.on { background: #e8f7ee; border-color: #86efac; color: #166534; }
+.mini-estado.vacio { background: #f8fafc; border-color: var(--linea); color: var(--suave); }
+.mini-estado .eti { font-size: 10px; font-weight: 600; white-space: nowrap; }
+.mini-estado .valor { font-size: 12px; font-weight: 700; white-space: nowrap; }
 
 @media (max-width: 1100px) {
   .estatus, .rejilla { grid-template-columns: repeat(3, minmax(0, 1fr)); }

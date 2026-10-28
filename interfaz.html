@@ -1092,7 +1092,7 @@ function cerrarModal() { document.getElementById("modal").hidden = true; modalIt
 
 function sinSesion(respuesta) {
   if (respuesta.status !== 401) return false;
-  location.href = "/login";
+  location.href = "/cerroprieto/login";
   return true;
 }
 async function postJson(url, cuerpo) {
@@ -1749,7 +1749,7 @@ document.getElementById("ip").addEventListener("change", () => {
 });
 document.getElementById("salir").addEventListener("click", async () => {
   await fetch("/salir", {method: "POST"});
-  location.href = "/login";
+  location.href = "/cerroprieto/login";
 });
 document.getElementById("refrescar").addEventListener("click", () => {
   tick().catch(e => mostrarAviso(e.message, true));

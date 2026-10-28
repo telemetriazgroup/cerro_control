@@ -1,7 +1,7 @@
 export async function jget(url) {
   const respuesta = await fetch(url);
   if (respuesta.status === 401) {
-    location.href = "/login";
+    location.href = "/cerroprieto/login";
     throw new Error("hay que iniciar sesión");
   }
   const data = await respuesta.json().catch(() => ({}));
@@ -16,7 +16,7 @@ export async function jpost(url, cuerpo) {
     body: JSON.stringify(cuerpo ?? {}),
   });
   if (respuesta.status === 401) {
-    location.href = "/login";
+    location.href = "/cerroprieto/login";
     throw new Error("hay que iniciar sesión");
   }
   const data = await respuesta.json().catch(() => ({}));

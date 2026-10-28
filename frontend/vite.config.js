@@ -18,7 +18,7 @@ export default defineConfig({
       "/usuarios": "http://127.0.0.1:9986",
       "/sesion": "http://127.0.0.1:9986",
       "/salir": "http://127.0.0.1:9986",
-      "/login": "http://127.0.0.1:9986",
+      "/cerroprieto/login": "http://127.0.0.1:9986",
       "/archivos": "http://127.0.0.1:9986",
       "/historial-comandos": "http://127.0.0.1:9986",
       "/salud": "http://127.0.0.1:9986",
