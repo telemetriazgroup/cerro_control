@@ -75,6 +75,42 @@ FABRICA = {
     "co2": {"1": 8.0, "2": 10.0, "3": 12.0},
     "o2": {"1": 4.0, "2": 4.0, "3": 8.0},
 }
+# Corrección de atmósfera: primero CO₂ con el tanque, después O₂ con el generador.
+# Los pasos sin comando son decisiones del proceso, no tramas del catálogo.
+PLANTILLA_CORRECCION = [
+    {"clave": "co2_abrir", "etapa": "A", "titulo": "Abrir la electroválvula de CO₂ de la zona", "comando_doc": "Z2_CO2", "comando": True},
+    {"clave": "co2_cerrar", "etapa": "A", "titulo": "Cerrar la electroválvula de CO₂", "comando_doc": "OFF_CO2", "comando": True},
+    {"clave": "esperar_co2", "etapa": "A", "titulo": "Esperar a que la lectura se estabilice y volver a leer CO₂ y O₂", "comando_doc": "", "comando": False},
+    {"clave": "repetir_co2", "etapa": "A", "titulo": "Si el CO₂ sigue a más de la tolerancia bajo el setpoint, repetir la inyección", "comando_doc": "", "comando": False},
+    {"clave": "bypass_off", "etapa": "B", "titulo": "Apagar el BYPASS para dejar el generador en nitrógeno", "comando_doc": "BYPASS_OFF", "comando": True},
+    {"clave": "nitro_abrir", "etapa": "B", "titulo": "Abrir la electroválvula de nitrógeno de la zona", "comando_doc": "Z2_Nitro", "comando": True},
+    {"clave": "validar", "etapa": "B", "titulo": "Confirmar BYPASS apagado y válvula de nitrógeno abierta antes de los compresores", "comando_doc": "", "comando": False},
+    {"clave": "comp1_on", "etapa": "B", "titulo": "Encender el compresor 1", "comando_doc": "COMP1_ON", "comando": True},
+    {"clave": "comp2_on", "etapa": "B", "titulo": "Encender el compresor 2", "comando_doc": "COMP2_ON", "comando": True},
+    {"clave": "vigilar_o2", "etapa": "B", "titulo": "Seguir el O₂ hasta el setpoint", "comando_doc": "", "comando": False},
+    {"clave": "comp2_off", "etapa": "B", "titulo": "Apagar el compresor 2", "comando_doc": "COMP2_OFF", "comando": True},
+    {"clave": "comp1_off", "etapa": "B", "titulo": "Apagar el compresor 1", "comando_doc": "COMP1_OFF", "comando": True},
+    {"clave": "nitro_cerrar", "etapa": "B", "titulo": "Cerrar las electroválvulas de ingreso", "comando_doc": "Nitro_OFF", "comando": True},
+]
+_TITULOS_ZONA = {
+    "co2_abrir": ("Z1_CO2", "Z2_CO2", "Z3_CO2"),
+    "nitro_abrir": ("Z1_Nitro", "Z2_Nitro", "Z3_Nitro"),
+}
+_TITULOS_FIJOS = {
+    "co2_cerrar": "OFF_CO2",
+    "bypass_off": "BYPASS_OFF",
+    "comp1_on": "COMP1_ON",
+    "comp2_on": "COMP2_ON",
+    "comp2_off": "COMP2_OFF",
+    "comp1_off": "COMP1_OFF",
+    "nitro_cerrar": "Nitro_OFF",
+}
+
+
+def _titulo_comando(clave, zona):
+    if clave in _TITULOS_ZONA:
+        return _TITULOS_ZONA[clave][int(zona) - 1]
+    return _TITULOS_FIJOS.get(clave) or ""
 SEMILLA = [
     ("Inyector", "Electro 0 · zona 1 · ventilador", "INYECTOR:&O0", "Salida &O0. El equipo responde INYECTOR_OK."),
     ("Inyector", "Salida &O1", "INYECTOR:&O1", "Salida &O1. El equipo responde INYECTOR_OK."),
@@ -936,6 +972,76 @@ class Panel:
             self._guardar_flujo()
             return self._flujo_pub()
 
+    def guardar_proceso(self, data):
+        """Guarda el proceso de corrección. Activarlo no encola comandos."""
+        if not isinstance(data, dict):
+            raise PanelError(400, "el proceso debe ser un objeto")
+        nombre = str(data.get("nombre") or "").strip()[:80]
+        if not nombre:
+            raise PanelError(400, "el proceso necesita un nombre")
+        try:
+            zona = int(data.get("zona") or 0)
+        except (TypeError, ValueError):
+            zona = 0
+        if zona not in (1, 2, 3):
+            raise PanelError(400, "la zona es 1, 2 o 3")
+        segundos_por_01 = self._entero_rango(data.get("segundos_por_01"), "los segundos por 0.1 % de CO₂", 1, 120)
+        espera_s = self._entero_rango(data.get("espera_s"), "la espera de estabilización", 0, 3600)
+        tolerancia = _num(data.get("tolerancia_co2"))
+        limite = _num(data.get("limite_generador"))
+        if tolerancia is None or tolerancia < 0 or tolerancia > 5:
+            raise PanelError(400, "la tolerancia de CO₂ va de 0 a 5")
+        if limite is None or limite < 0 or limite > 21:
+            raise PanelError(400, "el límite del generador va de 0 a 21")
+        crudos = data.get("comandos") if isinstance(data.get("comandos"), dict) else {}
+        activa = bool(data.get("activa"))
+        with self._lock:
+            comandos = {}
+            for paso in PLANTILLA_CORRECCION:
+                if not paso["comando"]:
+                    continue
+                ident = str(crudos.get(paso["clave"]) or "").strip()
+                titulo = _titulo_comando(paso["clave"], zona)
+                if ident:
+                    comandos[paso["clave"]] = self._cmd_catalogo(ident)["id"]
+                else:
+                    hallado = self._cmd_por_titulo(titulo)
+                    if hallado:
+                        comandos[paso["clave"]] = hallado["id"]
+                    elif activa:
+                        raise PanelError(400, f"para activar el evento falta el comando {titulo} en el catálogo")
+                    else:
+                        comandos[paso["clave"]] = ""
+            proceso = self._buscar_flujo("procesos", data.get("id"))
+            if data.get("id") and proceso is None:
+                raise PanelError(404, "no está ese proceso")
+            if proceso is None:
+                self.flujo["seq"] = int(self.flujo.get("seq") or 0) + 1
+                proceso = {"id": f"f{self.flujo['seq']}", "tipo": "correccion_atmosfera"}
+                self.flujo["procesos"].append(proceso)
+            proceso["nombre"] = nombre
+            proceso["zona"] = zona
+            proceso["activa"] = activa
+            proceso["segundos_por_01"] = segundos_por_01
+            proceso["espera_s"] = espera_s
+            proceso["tolerancia_co2"] = tolerancia
+            proceso["limite_generador"] = limite
+            proceso["comandos"] = comandos
+            if not activa:
+                self._frenar_proceso(proceso)
+            self._guardar_flujo()
+            self._guardar_cola()
+            return self._flujo_pub()
+
+    def quitar_proceso(self, ident):
+        with self._lock:
+            procesos = [p for p in self.flujo["procesos"] if p.get("id") != ident]
+            if len(procesos) == len(self.flujo["procesos"]):
+                raise PanelError(404, "no está ese proceso")
+            self.flujo["procesos"] = procesos
+            self._guardar_flujo()
+            return self._flujo_pub()
+
     def observar_serial(self, ip, texto, flujo="in", cuando=None):
         """Anota un comando de Starcool, inyector o válvulas y la respuesta que le sigue."""
         cuando = cuando or ahora()
@@ -1261,6 +1367,7 @@ class Panel:
             rec["r"] = [_num(v) for v in nums_r[:16]]
         self._append_lectura(rec)
         self._evaluar_reglas(est)
+        self._evaluar_procesos(est)
 
     def _append_lectura(self, rec):
         dia = _parse_iso(rec["t"])
@@ -1683,6 +1790,7 @@ class Panel:
         data.setdefault("pares", [])
         data.setdefault("secuencias", [])
         data.setdefault("reglas", [])
+        data.setdefault("procesos", [])
         data.setdefault("corridas", [])
         return data
 
@@ -1702,6 +1810,12 @@ class Panel:
             if cmd.get("id") == ident:
                 return cmd
         raise PanelError(400, "ese comando ya no está en el catálogo")
+
+    def _entero_rango(self, valor, nombre, minimo, maximo):
+        n = _num(valor)
+        if n is None or n < minimo or n > maximo:
+            raise PanelError(400, f"{nombre} va de {minimo} a {maximo}")
+        return int(round(n))
 
     def _espera_segundos(self, valor, nombre):
         n = _num(valor)
@@ -1842,7 +1956,24 @@ class Panel:
                 paso["segundos"] = round((actual - anterior).total_seconds(), 3)
         siguiente = next((p for p in corrida["pasos"] if p.get("n") == paso["n"] + 1), None)
         if siguiente is None:
-            self._marcar_corrida(corrida["id"], "cerrada", None, item.get("enviado"))
+            despues = paso.get("despues")
+            if despues == "leer" and not corrida.get("detener"):
+                marca = _parse_iso(item.get("enviado")) or ahora()
+                espera = float(corrida.get("espera_lectura") or 0)
+                corrida["fase"] = "esperar"
+                corrida["leer_desde"] = (marca + datetime.timedelta(seconds=espera)).isoformat(timespec="seconds")
+                self._guardar_flujo()
+                return
+            if despues == "vigilar" and not corrida.get("detener"):
+                corrida["fase"] = "vigilar_o2"
+                self._guardar_flujo()
+                return
+            if despues == "vigilar" and corrida.get("detener"):
+                dueño = self._buscar_flujo("procesos", corrida.get("proceso_id"))
+                if dueño and self._apagar_generador(dueño, corrida):
+                    return
+            motivo = "el operador apagó el evento" if corrida.get("detener") else None
+            self._marcar_corrida(corrida["id"], "cerrada", motivo, item.get("enviado"))
             return
         marca = _parse_iso(item.get("enviado")) or ahora()
         cuando = marca + datetime.timedelta(seconds=float(siguiente.get("espera") or 0))
@@ -1977,13 +2108,322 @@ class Panel:
             reglas.append(pub)
         return {
             "aviso": aviso,
+            "plantilla_correccion": json.loads(json.dumps(PLANTILLA_CORRECCION)),
+            "procesos": [self._proceso_pub(p, vigentes) for p in self.flujo["procesos"]],
             "pares": json.loads(json.dumps(self.flujo["pares"])),
             "secuencias": json.loads(json.dumps(self.flujo["secuencias"])),
             "reglas": reglas,
             "corridas": corridas,
             "lecturas": lecturas,
+            "objetivos": json.loads(json.dumps(self.config.get("objetivos") or {})),
             "comandos": json.loads(json.dumps(self.config.get("comandos") or [])),
         }
+
+    def _proceso_pub(self, proceso, vigentes):
+        pub = json.loads(json.dumps(proceso))
+        pub["situacion"] = self._situacion_proceso(proceso, vigentes)
+        comandos = proceso.get("comandos") or {}
+        pasos = []
+        for paso in PLANTILLA_CORRECCION:
+            item = dict(paso)
+            cmd_id = str(comandos.get(paso["clave"]) or "")
+            item["comando_doc"] = _titulo_comando(paso["clave"], proceso.get("zona") or 2) if paso["comando"] else ""
+            item["cmd_id"] = cmd_id
+            item["trama"] = ""
+            item["cmd_titulo"] = ""
+            if cmd_id:
+                for cmd in self.config.get("comandos") or []:
+                    if cmd.get("id") == cmd_id:
+                        item["trama"] = cmd.get("trama") or ""
+                        item["cmd_titulo"] = cmd.get("titulo") or item["trama"]
+                        break
+            pasos.append(item)
+        pub["pasos"] = pasos
+        corrida = self._corrida_proceso(proceso.get("id"))
+        pub["en_curso"] = self._texto_curso(corrida) if corrida else ""
+        if not corrida and proceso.get("activa") and int(proceso.get("seguidas") or 0) == 1:
+            pub["situacion"]["texto"] += " Falta otra lectura en la misma etapa para armar la corrida."
+        return pub
+
+    def _situacion_proceso(self, proceso, vigentes):
+        zona = int(proceso.get("zona") or 0)
+        co2 = vigentes.get((zona, "co2"))
+        o2 = vigentes.get((zona, "o2"))
+        objetivos = self.config.get("objetivos") or {}
+        set_co2 = _num((objetivos.get("co2") or {}).get(str(zona)))
+        set_o2 = _num((objetivos.get("o2") or {}).get(str(zona)))
+        return self._decidir_etapa(proceso, co2, o2, set_co2, set_o2)
+
+    def _cmd_por_titulo(self, titulo):
+        if not titulo:
+            return None
+        for cmd in self.config.get("comandos") or []:
+            if cmd.get("archivado"):
+                continue
+            if (cmd.get("titulo") or "").strip() == titulo:
+                return cmd
+        return None
+
+    def _resolver_cmd(self, proceso, clave):
+        ident = str((proceso.get("comandos") or {}).get(clave) or "").strip()
+        if ident:
+            try:
+                return self._cmd_catalogo(ident)
+            except PanelError:
+                return None
+        return self._cmd_por_titulo(_titulo_comando(clave, proceso.get("zona") or 1))
+
+    def _paso_marca(self, cmd, espera, despues):
+        paso = self._paso_cmd(cmd, espera, None, None)
+        paso["despues"] = despues
+        paso["clave"] = None
+        return paso
+
+    def _corrida_proceso(self, proceso_id):
+        for corrida in self.flujo["corridas"]:
+            if corrida.get("estado") == "activa" and corrida.get("proceso_id") == proceso_id:
+                return corrida
+        return None
+
+    def _gases_est(self, est, zona):
+        celdas = est.get("celdas") or []
+
+        def valor(idx):
+            if idx < 0 or idx >= len(celdas):
+                return None
+            celda = celdas[idx]
+            if celda.get("valor") is None or es_reinicio(celda.get("crudo")):
+                return None
+            return celda["valor"]
+
+        return valor(zona - 1), valor(3 + zona - 1)
+
+    def _situacion_est(self, proceso, est):
+        zona = int(proceso.get("zona") or 0)
+        co2, o2 = self._gases_est(est, zona)
+        objetivos = self.config.get("objetivos") or {}
+        set_co2 = _num((objetivos.get("co2") or {}).get(str(zona)))
+        set_o2 = _num((objetivos.get("o2") or {}).get(str(zona)))
+        return self._decidir_etapa(proceso, co2, o2, set_co2, set_o2)
+
+    def _decidir_etapa(self, proceso, co2, o2, set_co2, set_o2):
+        base = {"co2": co2, "o2": o2, "set_co2": set_co2, "set_o2": set_o2, "segundos": None, "etapa": None, "texto": ""}
+        if co2 is None or o2 is None or set_co2 is None or set_o2 is None:
+            base["texto"] = "Sin lectura vigente o sin setpoint de esta zona. El proceso no elige etapa."
+            return base
+        faltante = round(set_co2 - co2, 2)
+        tolerancia = float(proceso.get("tolerancia_co2") or 0)
+        if faltante > tolerancia:
+            segundos = int(round((faltante / 0.1) * float(proceso.get("segundos_por_01") or 0)))
+            base["etapa"] = "A"
+            base["segundos"] = segundos
+            base["texto"] = (
+                f"Etapa A. El CO₂ está {faltante:.1f} puntos bajo el setpoint. "
+                f"La inyección dura {segundos} s, contados desde que sale el comando de abrir, y después se esperan {int(proceso.get('espera_s') or 0)} s."
+            )
+            return base
+        if o2 > set_o2:
+            limite = float(proceso.get("limite_generador") or 0)
+            if set_o2 < limite:
+                base["etapa"] = "generador"
+                base["texto"] = (
+                    f"El CO₂ ya no pide inyección, pero el O₂ sigue en {o2:.1f} % "
+                    f"y el setpoint {set_o2:.1f} % queda bajo el límite del generador ({limite:.0f} %). "
+                    "Este proceso no enciende los compresores."
+                )
+            else:
+                base["etapa"] = "B"
+                base["texto"] = (
+                    f"Etapa B. El CO₂ ya está en rango y el O₂ sigue en {o2:.1f} %, sobre el setpoint {set_o2:.1f} %. "
+                    "Cada comando espera a que el anterior haya salido."
+                )
+            return base
+        base["etapa"] = "listo"
+        base["texto"] = "El CO₂ y el O₂ de esta zona ya están en el caso que el proceso da por corregido."
+        return base
+
+    def _evaluar_procesos(self, est):
+        if not self.flujo.get("procesos"):
+            return
+        cambio = False
+        for proceso in self.flujo["procesos"]:
+            if not proceso.get("activa"):
+                continue
+            corrida = self._corrida_proceso(proceso["id"])
+            if corrida is None:
+                if self._contar_y_arrancar(proceso, est):
+                    cambio = True
+                continue
+            fase = corrida.get("fase")
+            if fase == "esperar":
+                desde = _parse_iso(corrida.get("leer_desde"))
+                if desde and ahora() < desde:
+                    continue
+                if self._seguir_despues_de_esperar(proceso, corrida, est):
+                    cambio = True
+            elif fase == "vigilar_o2":
+                if self._vigilar_o2(proceso, corrida, est):
+                    cambio = True
+        if cambio:
+            self._guardar_flujo()
+            self._guardar_cola()
+
+    def _contar_y_arrancar(self, proceso, est):
+        situ = self._situacion_est(proceso, est)
+        etapa = situ.get("etapa")
+        if etapa not in ("A", "B"):
+            cambio = bool(proceso.get("seguidas")) or proceso.get("etapa_vista") not in (None, etapa)
+            proceso["seguidas"] = 0
+            proceso["etapa_vista"] = etapa
+            return cambio
+        if proceso.get("etapa_vista") != etapa:
+            proceso["seguidas"] = 1
+            proceso["etapa_vista"] = etapa
+            return True
+        proceso["seguidas"] = int(proceso.get("seguidas") or 0) + 1
+        if proceso["seguidas"] < 2:
+            return True
+        if not self._arrancar_proceso(proceso, est, situ):
+            return True
+        proceso["seguidas"] = 0
+        return True
+
+    def _arrancar_proceso(self, proceso, est, situ):
+        if situ.get("etapa") == "A":
+            abrir = self._resolver_cmd(proceso, "co2_abrir")
+            cerrar = self._resolver_cmd(proceso, "co2_cerrar")
+            if not abrir or not cerrar:
+                proceso["freno"] = f"falta el comando {_titulo_comando('co2_abrir', proceso['zona'])} o OFF_CO2"
+                return False
+            pasos = [
+                self._paso_marca(abrir, 0, None),
+                self._paso_marca(cerrar, situ.get("segundos") or 0, "leer"),
+            ]
+        else:
+            claves = ("bypass_off", "nitro_abrir", "comp1_on", "comp2_on")
+            cmds = [self._resolver_cmd(proceso, clave) for clave in claves]
+            if any(cmd is None for cmd in cmds):
+                proceso["freno"] = "falta un comando de la etapa B en el catálogo"
+                return False
+            pasos = [
+                self._paso_marca(cmds[0], 0, None),
+                self._paso_marca(cmds[1], 0, None),
+                self._paso_marca(cmds[2], 0, None),
+                self._paso_marca(cmds[3], 0, "vigilar"),
+            ]
+        corrida = self._abrir_corrida("proceso", proceso["id"], proceso["nombre"], est.get("ip"), pasos)
+        corrida["proceso_id"] = proceso["id"]
+        corrida["fase"] = "comandos"
+        corrida["espera_lectura"] = int(proceso.get("espera_s") or 0)
+        corrida["detener"] = False
+        proceso["freno"] = ""
+        return True
+
+    def _seguir_despues_de_esperar(self, proceso, corrida, est):
+        if corrida.get("detener"):
+            self._marcar_corrida(corrida["id"], "cerrada", "el operador apagó el evento")
+            return True
+        situ = self._situacion_est(proceso, est)
+        if situ.get("etapa") == "A":
+            abrir = self._resolver_cmd(proceso, "co2_abrir")
+            cerrar = self._resolver_cmd(proceso, "co2_cerrar")
+            if not abrir or not cerrar:
+                return False
+            self._encadenar(corrida, [
+                self._paso_marca(abrir, 0, None),
+                self._paso_marca(cerrar, situ.get("segundos") or 0, "leer"),
+            ])
+            return True
+        if situ.get("etapa") == "B":
+            return self._arrancar_etapa_b(proceso, corrida)
+        if situ.get("etapa") == "generador":
+            self._marcar_corrida(corrida["id"], "cerrada", "el generador no alcanza ese setpoint de O₂")
+            return True
+        self._marcar_corrida(corrida["id"], "cerrada", None)
+        return True
+
+    def _arrancar_etapa_b(self, proceso, corrida):
+        claves = ("bypass_off", "nitro_abrir", "comp1_on", "comp2_on")
+        cmds = [self._resolver_cmd(proceso, clave) for clave in claves]
+        if any(cmd is None for cmd in cmds):
+            proceso["freno"] = "falta un comando de la etapa B en el catálogo"
+            return False
+        self._encadenar(corrida, [
+            self._paso_marca(cmds[0], 0, None),
+            self._paso_marca(cmds[1], 0, None),
+            self._paso_marca(cmds[2], 0, None),
+            self._paso_marca(cmds[3], 0, "vigilar"),
+        ])
+        return True
+
+    def _vigilar_o2(self, proceso, corrida, est):
+        if corrida.get("detener"):
+            return self._apagar_generador(proceso, corrida)
+        situ = self._situacion_est(proceso, est)
+        if situ.get("o2") is None or situ.get("set_o2") is None:
+            return False
+        if situ["o2"] > situ["set_o2"]:
+            return False
+        return self._apagar_generador(proceso, corrida)
+
+    def _apagar_generador(self, proceso, corrida):
+        claves = ("comp2_off", "comp1_off", "nitro_cerrar")
+        cmds = [self._resolver_cmd(proceso, clave) for clave in claves]
+        if any(cmd is None for cmd in cmds):
+            self._marcar_corrida(corrida["id"], "cerrada", "faltan los comandos de apagado")
+            return True
+        self._encadenar(corrida, [
+            self._paso_marca(cmds[0], 0, None),
+            self._paso_marca(cmds[1], 0, None),
+            self._paso_marca(cmds[2], 0, "leer"),
+        ])
+        return True
+
+    def _encadenar(self, corrida, pasos):
+        corrida["fase"] = "comandos"
+        base = len(corrida["pasos"])
+        for i, paso in enumerate(pasos):
+            paso = dict(paso)
+            paso["n"] = base + i + 1
+            corrida["pasos"].append(paso)
+        primero = corrida["pasos"][base]
+        if base:
+            anterior = corrida["pasos"][base - 1]
+            marca = _parse_iso(anterior.get("enviado")) or ahora()
+            cuando = marca + datetime.timedelta(seconds=float(primero.get("espera") or 0))
+            primero["disponible_desde"] = cuando.isoformat(timespec="seconds")
+        puesto = self._poner_cola(
+            primero["trama"], primero["titulo"], primero.get("grupo") or "", corrida.get("ip"),
+            disponible_desde=primero.get("disponible_desde"),
+            par=primero.get("par"), rol=primero.get("rol"),
+            corrida=corrida["id"], paso=primero["n"],
+        )
+        primero["cola_id"] = puesto["id"]
+
+    def _frenar_proceso(self, proceso):
+        corrida = self._corrida_proceso(proceso.get("id"))
+        if corrida is None:
+            return
+        corrida["detener"] = True
+        if corrida.get("fase") == "vigilar_o2":
+            self._apagar_generador(proceso, corrida)
+        elif corrida.get("fase") == "esperar":
+            self._marcar_corrida(corrida["id"], "cerrada", "el operador apagó el evento")
+
+    def _texto_curso(self, corrida):
+        fase = corrida.get("fase")
+        pendiente = next((p for p in corrida.get("pasos") or [] if not p.get("enviado")), None)
+        if fase == "esperar":
+            hora = fmt_fecha(_parse_iso(corrida.get("leer_desde")))
+            return f"El comando ya salió. La lectura se vuelve a mirar desde {hora}."
+        if fase == "vigilar_o2":
+            return "Los compresores quedaron encendidos. Se apagan cuando el O₂ llegue al setpoint, y cada apagado espera a que salga el anterior."
+        if pendiente is None:
+            return "La corrida sigue el diagrama."
+        hora = fmt_fecha(_parse_iso(pendiente.get("disponible_desde")))
+        if hora:
+            return f"Espera a {pendiente.get('titulo')} desde {hora}, contado desde que el comando anterior salió."
+        return f"Espera a que salga {pendiente.get('titulo')}. El siguiente comando no entra antes."
 
     def _ahora_regla(self, regla, vigentes):
         if not regla.get("condiciones"):
@@ -3334,6 +3774,157 @@ def _test_flujo(tmp):
     antes = len([c for c in p.flujo["corridas"] if c.get("regla_id")])
     p.linea(ip, "STARCOOL_CONSULTA:8.2,5,8,4,4,8,80,80,80,1,0,1,0,0,0")
     assert len([c for c in p.flujo["corridas"] if c.get("regla_id")]) == antes
+    _test_proceso_en(p, cmds, ip)
+
+
+def _test_proceso_en(p, cmds, ip):
+    antes = len(p._cola)
+    pub = p.guardar_proceso({
+        "nombre": "Zona 2 · CO₂ primero",
+        "zona": 2,
+        "activa": False,
+        "segundos_por_01": 10,
+        "espera_s": 300,
+        "tolerancia_co2": 0.1,
+        "limite_generador": 7,
+        "comandos": {
+            "co2_abrir": cmds["INYECTOR:VALCO222"],
+            "co2_cerrar": cmds["INYECTOR:VALCO200"],
+        },
+    })
+    proc = pub["procesos"][0]
+    assert proc["activa"] is False
+    assert proc["comandos"]["bypass_off"] == ""
+    assert len(p._cola) == antes
+    p.actualizar({"objetivos": {"co2": {"1": 8, "2": 5, "3": 12}, "o2": {"1": 4, "2": 10, "3": 8}}})
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.7,8,4,10.6,8,80,80,80,1,0,1,0,0,0")
+    visto = p.flujo_publico(ip)["procesos"][0]["situacion"]
+    assert visto["etapa"] == "A"
+    assert visto["segundos"] == 30
+    try:
+        p.guardar_proceso({
+            "id": proc["id"],
+            "nombre": proc["nombre"],
+            "zona": 2,
+            "activa": True,
+            "segundos_por_01": 10,
+            "espera_s": 300,
+            "tolerancia_co2": 0.1,
+            "limite_generador": 7,
+            "comandos": proc["comandos"],
+        })
+        raise AssertionError("activar sin comandos debio fallar")
+    except PanelError as e:
+        assert e.status == 400
+    completo = {paso["clave"]: cmds["INYECTOR:VALCO222"] for paso in PLANTILLA_CORRECCION if paso["comando"]}
+    completo["co2_cerrar"] = cmds["INYECTOR:VALCO200"]
+    completo["nitro_abrir"] = cmds["INYECTOR:VALNITRO22"]
+    completo["nitro_cerrar"] = cmds["INYECTOR:VALNITRO00"]
+    guardado = p.guardar_proceso({
+        "id": proc["id"],
+        "nombre": proc["nombre"],
+        "zona": 2,
+        "activa": True,
+        "segundos_por_01": 10,
+        "espera_s": 300,
+        "tolerancia_co2": 0.1,
+        "limite_generador": 7,
+        "comandos": completo,
+    })
+    assert guardado["procesos"][0]["activa"] is True
+    assert len(p._cola) == antes
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.95,8,4,10.6,8,80,80,80,1,0,1,0,0,0")
+    assert p.flujo_publico(ip)["procesos"][0]["situacion"]["etapa"] == "B"
+    p.actualizar({"objetivos": {"co2": {"1": 8, "2": 5, "3": 12}, "o2": {"1": 4, "2": 4, "3": 8}}})
+    assert p.flujo_publico(ip)["procesos"][0]["situacion"]["etapa"] == "generador"
+    p.quitar_proceso(proc["id"])
+    assert p.flujo_publico(ip)["procesos"] == []
+
+
+def _test_corrida_proceso(tmp):
+    p = Panel(tmp)
+    ip = "10.2.2.2"
+    lista = [dict(cmd) for cmd in p.config["comandos"]]
+    for titulo, trama, grupo in (
+        ("Z2_CO2", "PANTALLA:CO2_2*", "CO2"),
+        ("OFF_CO2", "PANTALLA:CO2_0*", "CO2"),
+        ("BYPASS_OFF", "PANTALLA:INYECTOR:&O1*", "BYPASS"),
+        ("Z2_Nitro", "PANTALLA:NITRO22*", "NITROGENO"),
+        ("COMP1_ON", "PANTALLA:COMP_1_ON*", "COMPRESOR"),
+        ("COMP2_ON", "PANTALLA:COMP_2_ON*", "COMPRESOR"),
+        ("COMP2_OFF", "PANTALLA:COMP_2_OFF*", "COMPRESOR"),
+        ("COMP1_OFF", "PANTALLA:COMP_1_OFF*", "COMPRESOR"),
+        ("Nitro_OFF", "PANTALLA:NITRO0*", "NITROGENO"),
+    ):
+        lista.append({"titulo": titulo, "trama": trama, "grupo": grupo, "descripcion": ""})
+    p.guardar_catalogo(lista)
+    p.actualizar({"objetivos": {"co2": {"1": 8, "2": 5, "3": 12}, "o2": {"1": 4, "2": 10, "3": 8}}})
+    pub = p.guardar_proceso({
+        "nombre": "Zona 2",
+        "zona": 2,
+        "activa": True,
+        "segundos_por_01": 10,
+        "espera_s": 300,
+        "tolerancia_co2": 0.1,
+        "limite_generador": 7,
+        "comandos": {},
+    })
+    proc = pub["procesos"][0]
+    assert proc["pasos"][0]["trama"] == "PANTALLA:CO2_2*"
+    consulta = "STARCOOL_CONSULTA:8,4.7,8,4,10.6,8,80,80,80,1,0,1,0,0,0"
+    p.linea(ip, consulta)
+    assert p.tomar_ventana(ip) is None
+    p.linea(ip, consulta)
+    abierto = p.tomar_ventana(ip)
+    assert abierto["trama"] == "PANTALLA:CO2_2*"
+    p.confirmar(abierto["id"], ok=True)
+    assert p.tomar_ventana(ip) is None
+    off = next(x for x in p._cola if x.get("trama") == "PANTALLA:CO2_0*" and x.get("estado") == 1)
+    delta = _parse_iso(off["disponible_desde"]) - _parse_iso(p._buscar(abierto["id"])["enviado"])
+    assert 29 <= delta.total_seconds() <= 31
+    off["disponible_desde"] = (ahora() - datetime.timedelta(seconds=1)).isoformat(timespec="seconds")
+    cerrado = p.tomar_ventana(ip)
+    assert cerrado["trama"] == "PANTALLA:CO2_0*"
+    p.confirmar(cerrado["id"], ok=True)
+    corrida = next(c for c in p.flujo["corridas"] if c.get("proceso_id") == proc["id"])
+    assert corrida["fase"] == "esperar"
+    p.linea(ip, consulta)
+    assert p.tomar_ventana(ip) is None
+    corrida["leer_desde"] = (ahora() - datetime.timedelta(seconds=1)).isoformat(timespec="seconds")
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.95,8,4,10.6,8,80,80,80,1,0,1,0,0,0")
+    bypass = p.tomar_ventana(ip)
+    assert bypass["trama"] == "PANTALLA:INYECTOR:&O1*"
+    p.confirmar(bypass["id"], ok=True)
+    assert any(x.get("trama") == "PANTALLA:NITRO22*" and x.get("estado") == 1 for x in p._cola)
+    assert not any(x.get("trama") == "PANTALLA:COMP_1_ON*" for x in p._cola)
+    nitro = p.tomar_ventana(ip)
+    assert nitro["trama"] == "PANTALLA:NITRO22*"
+    p.confirmar(nitro["id"], ok=True)
+    comp1 = p.tomar_ventana(ip)
+    assert comp1["trama"] == "PANTALLA:COMP_1_ON*"
+    p.confirmar(comp1["id"], ok=True)
+    comp2 = p.tomar_ventana(ip)
+    assert comp2["trama"] == "PANTALLA:COMP_2_ON*"
+    p.confirmar(comp2["id"], ok=True)
+    assert p.flujo["corridas"][0]["fase"] == "vigilar_o2" or any(c.get("fase") == "vigilar_o2" for c in p.flujo["corridas"])
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.95,8,4,10.6,8,80,80,80,1,0,1,0,0,0")
+    assert p.tomar_ventana(ip) is None
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.95,8,4,10.0,8,80,80,80,1,0,1,0,0,0")
+    apagado = p.tomar_ventana(ip)
+    assert apagado["trama"] == "PANTALLA:COMP_2_OFF*"
+    p.confirmar(apagado["id"], ok=True)
+    apagado = p.tomar_ventana(ip)
+    assert apagado["trama"] == "PANTALLA:COMP_1_OFF*"
+    p.confirmar(apagado["id"], ok=True)
+    apagado = p.tomar_ventana(ip)
+    assert apagado["trama"] == "PANTALLA:NITRO0*"
+    p.confirmar(apagado["id"], ok=True)
+    corrida = next(c for c in p.flujo["corridas"] if c.get("proceso_id") == proc["id"])
+    assert corrida["fase"] == "esperar"
+    corrida["leer_desde"] = (ahora() - datetime.timedelta(seconds=1)).isoformat(timespec="seconds")
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.95,8,4,10.0,8,80,80,80,1,0,1,0,0,0")
+    assert corrida["estado"] == "cerrada"
+    assert p.tomar_ventana(ip) is None
 
 
 def _test_union_api(tmp):
@@ -3375,7 +3966,7 @@ def _test_union_api(tmp):
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo, _test_union_api):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo, _test_corrida_proceso, _test_union_api):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

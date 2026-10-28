@@ -128,3 +128,24 @@ Quitar un par no borra el catálogo de comandos. Desactivar una regla no corta u
 3. Reglas evaluadas en cada `STARCOOL_CONSULTA`, con el último valor válido y el disparo al entrar en el rango.
 
 Hasta el paso 3 el flujo es manual. Las reglas no se activan solas el día en que se publica la pestaña: nacen desactivadas.
+
+## 9. Proceso de corrección de atmósfera
+
+El procedimiento de la zona 2 no cabe en una secuencia plana. Tiene un tiempo que sale de la lectura, una espera de estabilización, una repetición y una segunda etapa que solo empieza si el O₂ sigue alto.
+
+El orden que el panel reconoce:
+
+1. Etapa A. Si el CO₂ está a más de la tolerancia (0.1) bajo el setpoint, abrir la electroválvula de CO₂, mantenerla `(setpoint − lectura) / 0.1 × segundos por 0.1 %` y cerrarla. La referencia de campo de esta cámara es 10 s por cada 0.1 %, así que 0.3 % son 30 s. Después se esperan 300 s y se vuelve a leer. Si sigue faltando CO₂, se repite la etapa A.
+2. Etapa B. Solo con el CO₂ ya en rango. Apagar BYPASS, abrir el nitrógeno de la zona, confirmar esos dos estados, encender compresor 1 y después compresor 2, seguir el O₂ hasta el setpoint, apagar compresor 2, apagar compresor 1 y al final cerrar las electroválvulas de ingreso.
+3. Si el setpoint de O₂ es menor que 7 %, el generador no alcanza. El proceso lo dice y no enciende compresores.
+
+La pestaña **Corrección de atmósfera** guarda ese proceso con la zona y los cuatro números. Los comandos salen del catálogo de producción por su título: `Z2_CO2`, `OFF_CO2`, `BYPASS_OFF`, `Z2_Nitro`, `COMP1_ON`, `COMP2_ON`, `COMP2_OFF`, `COMP1_OFF` y `Nitro_OFF`. En las zonas 1 y 3 el CO₂ y el nitrógeno usan `Z1_CO2`, `Z3_CO2`, `Z1_Nitro` y `Z3_Nitro`. Si el operador elige otro comando del catálogo, ese reemplaza al título.
+
+El evento nace apagado. Con el evento activado hacen falta dos lecturas seguidas en la misma etapa para armar la corrida. A partir de ahí cada comando espera a que el anterior haya salido por el serial:
+
+- `OFF_CO2` espera los segundos calculados desde el envío de `Z2_CO2`.
+- La lectura siguiente espera el tiempo de estabilización desde el envío de `OFF_CO2`.
+- `Z2_Nitro` espera a que haya salido `BYPASS_OFF`. `COMP1_ON` espera a `Z2_Nitro`. `COMP2_ON` espera a `COMP1_ON`.
+- Con los dos compresores ya enviados, el apagado espera a que el O₂ llegue al setpoint. Sale `COMP2_OFF`, después `COMP1_OFF` y al final `Nitro_OFF`.
+
+Apagar el evento no corta un cierre de CO₂ que ya está en cola. Si los compresores ya están en marcha, encola el apagado.

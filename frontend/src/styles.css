@@ -198,6 +198,14 @@ th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--lin
 th { color: var(--suave); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: #fff; }
 .tabla-marco { overflow: auto; max-height: 520px; border: 1px solid var(--linea); border-radius: 12px; }
 
+.vista-proceso { margin: 8px 0 12px; padding: 10px 12px; border-radius: 12px; background: #f4f7f5; border: 1px solid var(--linea); }
+.pasos-flujo { display: grid; gap: 6px; margin-top: 12px; }
+.paso-flujo {
+  display: grid; grid-template-columns: 72px 1fr minmax(180px, 280px); gap: 8px; align-items: center;
+  border: 1px solid var(--linea); border-radius: 12px; padding: 8px 10px;
+}
+.paso-flujo .eti { font-size: 12px; font-weight: 700; color: var(--suave); }
+.check-evento { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .lista { display: grid; gap: 8px; }
 .fila {
   display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -235,7 +243,7 @@ th { color: var(--suave); font-weight: 600; font-size: 12px; position: sticky; t
   .menu button { width: auto; white-space: nowrap; }
   .barra { flex-wrap: wrap; }
   .estatus, .rejilla, .fila-valvulas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .rango-graf { grid-template-columns: 1fr; }
+  .rango-graf, .paso-flujo { grid-template-columns: 1fr; }
   .zonas, .historia { grid-template-columns: 1fr; }
   .tope, .cabecera-eq, .pie-analisis { flex-direction: column; }
 }

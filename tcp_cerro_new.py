@@ -1499,6 +1499,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif ruta == "/flujo/regla/quitar":
                 data = self._cuerpo_json()
                 self._json(200, {"ok": True, **panel.quitar_regla(data.get("id"))})
+            elif ruta == "/flujo/proceso":
+                self._json(200, {"ok": True, **panel.guardar_proceso(self._cuerpo_json())})
+            elif ruta == "/flujo/proceso/quitar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.quitar_proceso(data.get("id"))})
             else:
                 self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:
