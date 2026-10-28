@@ -1,9 +1,37 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { jpost } from "./api.js";
 
 export default function Serial({ lineas, enlaces, comandos, onAviso }) {
   const [directo, setDirecto] = useState(false);
   const [trama, setTrama] = useState("");
+  const caja = useRef(null);
+  const seguir = useRef(true);
+  const propio = useRef(false);
+  const lista = (lineas || []).slice(-200);
+  const ultima = lista.length ? lista[lista.length - 1] : null;
+
+  useEffect(() => {
+    const el = caja.current;
+    if (!el || !seguir.current) return;
+    let vivo = true;
+    propio.current = true;
+    const bajar = () => {
+      if (vivo && caja.current) caja.current.scrollTop = caja.current.scrollHeight;
+    };
+    bajar();
+    const marco = requestAnimationFrame(() => {
+      bajar();
+      requestAnimationFrame(() => { if (vivo) propio.current = false; });
+    });
+    return () => { vivo = false; cancelAnimationFrame(marco); };
+  }, [lista.length, ultima && ultima.n]);
+
+  function alDesplazar() {
+    if (propio.current) return;
+    const el = caja.current;
+    if (!el) return;
+    seguir.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }
   const activos = (comandos || []).filter(c => !c.archivado);
   const grupos = {};
   for (const cmd of activos) {
@@ -31,24 +59,18 @@ export default function Serial({ lineas, enlaces, comandos, onAviso }) {
         Un comando sale en el próximo espacio de unos 2 s entre respuestas.
       </p>
       <h3 className="kicker">Línea</h3>
-      <div className="log mono">
-        {(lineas || []).length ? lineas.map(l => (
+      <p className="leyenda">
+        {ultima
+          ? "Última: " + (ultima.hora || ultima.t || "") + "  " + (ultima.texto || ultima.linea || "")
+          : "Esperando la primera trama."}
+        {" "}· últimas {lista.length} de 200.
+      </p>
+      <div className="log mono" ref={caja} onScroll={alDesplazar}>
+        {lista.length ? lista.map(l => (
           <div key={l.n}>{(l.hora || l.t || "") + "  " + (l.ip ? l.ip + "  " : "") + (l.texto || l.linea || "")}</div>
         )) : "Esperando tramas."}
       </div>
-      <h3 className="kicker">Comandos</h3>
-      {Object.entries(grupos).map(([grupo, lista]) => (
-        <div key={grupo} style={{ marginBottom: 12 }}>
-          <div className="leyenda">{grupo}</div>
-          <div className="rango">
-            {lista.map(cmd => (
-              <button className="secundario" key={cmd.id} type="button" title={cmd.trama} onClick={() => encolar(cmd)}>{cmd.titulo}</button>
-            ))}
-          </div>
-        </div>
-      ))}
-      {!activos.length && <p className="leyenda">No hay comandos activos en el catálogo.</p>}
-      <button className="primario" type="button" onClick={() => setDirecto(v => !v)}>Enviar comando directamente</button>
+      <button className="primario" type="button" style={{ marginTop: 12 }} onClick={() => setDirecto(v => !v)}>Enviar comando directamente</button>
       {directo && (
         <form className="rango" style={{ marginTop: 12 }} onSubmit={ev => {
           ev.preventDefault();
@@ -63,6 +85,18 @@ export default function Serial({ lineas, enlaces, comandos, onAviso }) {
           <button className="primario" type="submit">Enviar</button>
         </form>
       )}
+      <h3 className="kicker">Comandos</h3>
+      {Object.entries(grupos).map(([grupo, lista]) => (
+        <div key={grupo} style={{ marginBottom: 12 }}>
+          <div className="leyenda">{grupo}</div>
+          <div className="rango">
+            {lista.map(cmd => (
+              <button className="secundario" key={cmd.id} type="button" title={cmd.trama} onClick={() => encolar(cmd)}>{cmd.titulo}</button>
+            ))}
+          </div>
+        </div>
+      ))}
+      {!activos.length && <p className="leyenda">No hay comandos activos en el catálogo.</p>}
     </section>
   );
 }

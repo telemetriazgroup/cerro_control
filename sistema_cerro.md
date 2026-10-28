@@ -157,3 +157,14 @@ Todas en el puerto 9986, en la raíz, con la cookie de sesión. El prefijo `/cer
 | POST `/archivos`, POST `/archivos/incorporar` | Subir un txt e incorporarlo. Tope 20 MB. Si ese día ya tiene lecturas, hace falta `reemplazar: true` |
 
 Un script puede usar la API como administrador si existe `CERRO_API_TOKEN` y manda la cabecera `X-Token`.
+
+## Histórico anterior al serial
+
+El serial guardado en este equipo empieza el 24/10/2026 a las 00:00, hora America/Lima. Si el rango de `/lecturas` o del reporte empieza antes, esa parte se pide a TermoKing y se une a las lecturas locales en una sola serie, ordenada por hora. Del 24/10/2026 en adelante sigue valiendo solo el serial.
+
+Las dos consultas comparten la misma fecha. `st_1` … `st_6` son el CO₂ y el O₂ de las tres zonas, en el orden de `STARCOOL_CONSULTA`. `ac_1` … `ac_16` son los 16 campos de `REEFER_QUEST`. El IMEI es `860389053949943`.
+
+- `GET http://161.132.53.51:9051/TermoKing/CerroPrietoSeries/860389053949943/starcool_cerro_prieto?start_date=23-10-2026_22-00-00&end_date=23-10-2026_23-00-00`
+- `GET http://161.132.53.51:9051/TermoKing/CerroPrietoSeries/860389053949943/atmosfera_controlada?start_date=23-10-2026_22-00-00&end_date=23-10-2026_23-00-00`
+
+La fecha va como `dd-mm-aaaa_HH-MM-SS`, en GMT-5. Si TermoKing no responde, el aviso lo dice y el rango local se muestra igual.

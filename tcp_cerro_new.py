@@ -614,7 +614,7 @@ def _despachar_ventana(sesion, comando):
 def snapshot_serial(desde=0, ip=None, equipo=None):
     with _serial_lock:
         if desde <= 0:
-            lineas = list(_serial_lineas)[-300:]
+            lineas = list(_serial_lineas)[-200:]
         else:
             lineas = [x for x in _serial_lineas if x["n"] > desde]
         if ip:

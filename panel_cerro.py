@@ -11,6 +11,8 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from zoneinfo import ZoneInfo
 
 try:
@@ -142,6 +144,93 @@ def _rango_busqueda(desde_s, hasta_s):
 def _dentro(marca, inicio, fin):
     dt = _parse_iso(marca)
     return dt is not None and inicio <= dt < fin
+
+
+# El serial propio arranca aquí. Lo anterior sale de TermoKing y se une al mismo histórico.
+CORTE_LOCAL = datetime.datetime(2026, 10, 24, 0, 0, tzinfo=ZONA)
+IMEI_HISTORICO = os.environ.get("CERRO_IMEI", "860389053949943")
+URL_HISTORICO = os.environ.get(
+    "CERRO_HISTORICO_URL",
+    "http://161.132.53.51:9051/TermoKing/CerroPrietoSeries",
+).rstrip("/")
+_historico_cache = {}
+_historico_cache_lock = threading.Lock()
+
+
+def _fmt_api(dt):
+    return dt.astimezone(ZONA).strftime("%d-%m-%Y_%H-%M-%S")
+
+
+def _bajar_json(url):
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.load(resp)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        raise PanelError(502, f"no se pudo leer el histórico TermoKing: {e}") from e
+
+
+def _columnas_serie(cuerpo, prefijo, cantidad):
+    if not isinstance(cuerpo, dict):
+        return {}
+    fechas = cuerpo.get("fechas") or []
+    series = cuerpo.get("series") or {}
+    columnas = []
+    for i in range(1, cantidad + 1):
+        col = series.get(f"{prefijo}_{i}") or []
+        columnas.append(col if isinstance(col, list) else [])
+    salida = {}
+    for i, fecha in enumerate(fechas):
+        if not isinstance(fecha, str):
+            continue
+        salida[fecha] = [_num(col[i]) if i < len(col) else None for col in columnas]
+    return salida
+
+
+def _registros_historico(starcool, reefer, inicio, fin):
+    """st_1..st_6 son el CO₂ y el O₂; ac_1..ac_16 es el REEFER_QUEST. Misma fecha, una fila."""
+    st = _columnas_serie((starcool or {}).get("data") or {}, "st", 6)
+    ac = _columnas_serie((reefer or {}).get("data") or {}, "ac", 16)
+    registros = []
+    for fecha in sorted(set(st) | set(ac), key=lambda s: _parse_iso(s) or CORTE_LOCAL):
+        dt = _parse_iso(fecha)
+        if dt is None or not (inicio <= dt < fin) or dt >= CORTE_LOCAL:
+            continue
+        gases = list(st.get(fecha) or [None] * 6)
+        gases = (gases + [None] * 6)[:6]
+        equipo = list(ac.get(fecha) or [])[:16]
+        if all(v is None for v in gases) and all(v is None for v in equipo):
+            continue
+        registros.append({
+            "t": dt.replace(microsecond=0).isoformat(timespec="seconds"),
+            "ip": "api",
+            "v": gases,
+            "r": equipo,
+        })
+    return registros
+
+
+def _historico_previo(inicio, fin):
+    """Series TermoKing anteriores al serial local, ya en el formato de una lectura."""
+    if fin <= inicio:
+        return []
+    clave = (_fmt_api(inicio), _fmt_api(fin))
+    ahora_m = time.monotonic()
+    with _historico_cache_lock:
+        guardado = _historico_cache.get(clave)
+        if guardado and ahora_m - guardado[0] < 120:
+            return guardado[1]
+    q = f"start_date={clave[0]}&end_date={clave[1]}"
+    base = f"{URL_HISTORICO}/{IMEI_HISTORICO}"
+    starcool = _bajar_json(f"{base}/starcool_cerro_prieto?{q}")
+    reefer = _bajar_json(f"{base}/atmosfera_controlada?{q}")
+    registros = _registros_historico(starcool, reefer, inicio, fin)
+    with _historico_cache_lock:
+        _historico_cache[clave] = (ahora_m, registros)
+        if len(_historico_cache) > 24:
+            vieja = min(_historico_cache, key=lambda k: _historico_cache[k][0])
+            _historico_cache.pop(vieja, None)
+    return registros
 
 
 def _familia_comando(texto):
@@ -894,6 +983,19 @@ class Panel:
 
     def lecturas(self, desde_s, hasta_s, ip=None, completo=False):
         inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
+        api_recs = []
+        api_ok = False
+        if inicio < CORTE_LOCAL:
+            try:
+                api_recs = _historico_previo(inicio, min(fin, CORTE_LOCAL))
+                api_ok = True
+            except Exception as e:
+                print(f"❌ Histórico anterior al 24/10/2026: {e}")
+                nota = "No se alcanzó el histórico anterior al 24/10/2026."
+                aviso = nota if not aviso else f"{aviso} {nota}"
+            else:
+                nota = "Antes del 24/10/2026 00:00 los puntos salen de TermoKing y se unen al serial."
+                aviso = nota if not aviso else f"{aviso} {nota}"
         with self._lock:
             objetivos, origen = self._objetivos_de(self._elegir(ip))
             objetivos = json.loads(json.dumps(objetivos))
@@ -906,7 +1008,65 @@ class Panel:
         horas_orden = []
         total = 0
         paso = 1
-        dia = inicio.date()
+
+        def tomar(rec):
+            nonlocal total, paso
+            vals = rec.get("v") or []
+            celdas = []
+            for i in range(6):
+                crudo = vals[i] if i < len(vals) else None
+                celda, ultimo[i], tend[i] = paso_gas(ultimo[i], tend[i], crudo)
+                celdas.append(celda)
+                _sumar_stat(stats[i], celda, _obj_indice(objetivos, i))
+            _sumar_hora(horas_map, horas_orden, rec.get("t"), celdas)
+            total += 1
+            campos_r = interpretar_reefer(rec.get("r"))
+            if (total - 1) % paso == 0:
+                puntos.append({
+                    "t": rec["t"],
+                    "co2": [_num(celdas[i]["valor"]) for i in range(3)],
+                    "o2": [_num(celdas[i]["valor"]) for i in range(3, 6)],
+                    "temp": {c["clave"]: c["valor"] for c in campos_r if c["clave"] in TEMPS_REEFER},
+                })
+            if len(puntos) > 2000:
+                del puntos[1::2]
+                paso *= 2
+            tabla.append(_fila_tabla(rec, celdas, objetivos, campos_r))
+
+        def sirve(rec):
+            origen_ip = rec.get("ip")
+            if ip and origen_ip not in (ip, "archivo", "api"):
+                return False
+            return _dentro(rec.get("t"), inicio, fin)
+
+        previos = []
+        if api_ok:
+            dia = inicio.date()
+            tope = min((fin - datetime.timedelta(seconds=1)).date(), CORTE_LOCAL.date())
+            while dia <= tope:
+                ruta = os.path.join(self.dir_lecturas, dia.isoformat() + ".jsonl")
+                dia += datetime.timedelta(days=1)
+                if not os.path.exists(ruta):
+                    continue
+                try:
+                    fh = open(ruta, encoding="utf-8")
+                except OSError:
+                    continue
+                with fh:
+                    for linea in fh:
+                        rec = _linea_lectura(linea)
+                        if rec is None or not sirve(rec):
+                            continue
+                        if (_parse_iso(rec.get("t")) or CORTE_LOCAL) < CORTE_LOCAL:
+                            previos.append(rec)
+            ocupados = {str(rec.get("t") or "")[:19] for rec in previos}
+            fusion = [rec for rec in api_recs if str(rec.get("t") or "")[:19] not in ocupados]
+            fusion.extend(previos)
+            fusion.sort(key=lambda rec: rec.get("t") or "")
+            for rec in fusion:
+                tomar(rec)
+
+        dia = max(inicio.date(), CORTE_LOCAL.date()) if api_ok else inicio.date()
         ultimo_dia = (fin - datetime.timedelta(seconds=1)).date()
         while dia <= ultimo_dia:
             ruta = os.path.join(self.dir_lecturas, dia.isoformat() + ".jsonl")
@@ -920,34 +1080,11 @@ class Panel:
             with fh:
                 for linea in fh:
                     rec = _linea_lectura(linea)
-                    if rec is None:
+                    if rec is None or not sirve(rec):
                         continue
-                    origen_ip = rec.get("ip")
-                    if ip and origen_ip not in (ip, "archivo"):
+                    if api_ok and (_parse_iso(rec.get("t")) or CORTE_LOCAL) < CORTE_LOCAL:
                         continue
-                    if not _dentro(rec.get("t"), inicio, fin):
-                        continue
-                    vals = rec.get("v") or []
-                    celdas = []
-                    for i in range(6):
-                        crudo = vals[i] if i < len(vals) else None
-                        celda, ultimo[i], tend[i] = paso_gas(ultimo[i], tend[i], crudo)
-                        celdas.append(celda)
-                        _sumar_stat(stats[i], celda, _obj_indice(objetivos, i))
-                    _sumar_hora(horas_map, horas_orden, rec.get("t"), celdas)
-                    total += 1
-                    campos_r = interpretar_reefer(rec.get("r"))
-                    if (total - 1) % paso == 0:
-                        puntos.append({
-                            "t": rec["t"],
-                            "co2": [_num(celdas[i]["valor"]) for i in range(3)],
-                            "o2": [_num(celdas[i]["valor"]) for i in range(3, 6)],
-                            "temp": {c["clave"]: c["valor"] for c in campos_r if c["clave"] in TEMPS_REEFER},
-                        })
-                    if len(puntos) > 2000:
-                        puntos = puntos[::2]
-                        paso *= 2
-                    tabla.append(_fila_tabla(rec, celdas, objetivos, campos_r))
+                    tomar(rec)
         return {
             "desde": inicio.isoformat(timespec="minutes"),
             "hasta": (fin - datetime.timedelta(seconds=1)).isoformat(timespec="seconds"),
@@ -3084,20 +3221,25 @@ def _test_importar(tmp):
     assert info["fecha"] == "2026-10-23"
     assert info["lecturas_archivo"] == 1
     assert info["con_reefer"] == 1
-    visto = p.lecturas("2026-10-23T00:00", "2026-10-23T00:00", "190.223.54.2")
-    assert visto["total"] == 1
-    fila = visto["tabla"][0]
-    assert fila["zonas"][0]["co2"]["valor"] == 6.2
-    assert fila["t"].startswith("2026-10-23T00:00:14")
-    textos = {c["clave"]: c["texto"] for c in fila["reefer"]}
-    assert textos["power"] == "Encendido"
-    assert textos["suministro"] == "4.0 °C"
-    assert textos["sp_co2"] == "NA"
-    repetido = p.incorporar_archivo(ruta)
-    assert repetido["existe"] is True and repetido["incorporado"] is False
-    assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
-    p.incorporar_archivo(ruta, reemplazar=True)
-    assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
+    real = _historico_previo
+    globals()["_historico_previo"] = lambda a, b: []
+    try:
+        visto = p.lecturas("2026-10-23T00:00", "2026-10-23T00:00", "190.223.54.2")
+        assert visto["total"] == 1
+        fila = visto["tabla"][0]
+        assert fila["zonas"][0]["co2"]["valor"] == 6.2
+        assert fila["t"].startswith("2026-10-23T00:00:14")
+        textos = {c["clave"]: c["texto"] for c in fila["reefer"]}
+        assert textos["power"] == "Encendido"
+        assert textos["suministro"] == "4.0 °C"
+        assert textos["sp_co2"] == "NA"
+        repetido = p.incorporar_archivo(ruta)
+        assert repetido["existe"] is True and repetido["incorporado"] is False
+        assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
+        p.incorporar_archivo(ruta, reemplazar=True)
+        assert p.lecturas("2026-10-23", "2026-10-23")["total"] == 1
+    finally:
+        globals()["_historico_previo"] = real
     malo = os.path.join(carpeta, "notas.txt")
     open(malo, "w").close()
     try:
@@ -3194,10 +3336,46 @@ def _test_flujo(tmp):
     assert len([c for c in p.flujo["corridas"] if c.get("regla_id")]) == antes
 
 
+def _test_union_api(tmp):
+    p = Panel(tmp)
+    os.makedirs(p.dir_lecturas, exist_ok=True)
+    with open(os.path.join(p.dir_lecturas, "2026-10-23.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "t": "2026-10-23T22:10:00-05:00",
+            "ip": "10.0.0.1",
+            "v": [9, 9, 9, 9, 9, 9],
+        }) + "\n")
+    star = {"data": {"fechas": ["2026-10-23T22:02:26.314000", "2026-10-23T22:10:00", "2026-10-24T00:00:00"], "series": {
+        "st_1": [6.1, 1, 1], "st_2": [0.2, 1, 1], "st_3": [0.6, 1, 1],
+        "st_4": [11.3, 1, 1], "st_5": [19.5, 1, 1], "st_6": [9.6, 1, 1],
+    }}}
+    reef = {"data": {"fechas": ["2026-10-23T22:02:26.314000"], "series": {
+        f"ac_{i}": [1 if i == 1 else 4.0] for i in range(1, 17)
+    }}}
+    inicio = datetime.datetime(2026, 10, 23, 22, 0, tzinfo=ZONA)
+    fin = datetime.datetime(2026, 10, 23, 23, 0, tzinfo=ZONA)
+    regs = _registros_historico(star, reef, inicio, fin)
+    assert len(regs) == 2
+    assert regs[0]["v"] == [6.1, 0.2, 0.6, 11.3, 19.5, 9.6]
+    assert len(regs[0]["r"]) == 16
+    assert regs[0]["t"].startswith("2026-10-23T22:02:26")
+    real = _historico_previo
+    try:
+        globals()["_historico_previo"] = lambda a, b: regs
+        data = p.lecturas("2026-10-23T22:00", "2026-10-23T23:00")
+    finally:
+        globals()["_historico_previo"] = real
+    assert data["total"] == 2
+    assert data["puntos"][0]["co2"][0] == 6.1
+    assert data["puntos"][0]["temp"]["set_point"] == 4.0
+    assert data["puntos"][1]["co2"][0] == 9
+    assert "TermoKing" in (data["aviso"] or "")
+
+
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo, _test_union_api):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

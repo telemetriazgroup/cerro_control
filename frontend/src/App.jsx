@@ -55,7 +55,7 @@ export default function App() {
         const data = await jget("/serial?desde=" + desde);
         if (!vivo) return;
         if (typeof data.siguiente === "number") desde = data.siguiente;
-        if (data.lineas?.length) lineas = lineas.concat(data.lineas).slice(-400);
+        if (data.lineas?.length) lineas = lineas.concat(data.lineas).slice(-200);
         setSnap({ ...data, lineas });
       } catch (e) {
         if (vivo && e.message && e.message !== "hay que iniciar sesión") onAviso(e.message, true);
