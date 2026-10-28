@@ -956,8 +956,20 @@ def _escribir_usuarios(usuarios):
     os.replace(temporal, _RUTA_USUARIOS)
 
 
+def _texto_nombre(valor, etiqueta):
+    texto = " ".join(str(valor or "").split())
+    if len(texto) > 60 or not re.fullmatch(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ .'-]*", texto):
+        raise ErrorComando(400, f"{etiqueta} usa letras y espacios, hasta 60 caracteres")
+    return texto
+
+
 def _usuario_publico(item):
-    return {"usuario": item.get("usuario"), "rol": item.get("rol")}
+    return {
+        "usuario": item.get("usuario"),
+        "rol": item.get("rol"),
+        "nombres": item.get("nombres") or "",
+        "apellidos": item.get("apellidos") or "",
+    }
 
 
 def _buscar_usuario(usuario):
@@ -976,7 +988,7 @@ def _credenciales_ok(usuario, clave):
     return item
 
 
-def _crear_usuario(usuario, clave, rol):
+def _crear_usuario(usuario, clave, rol, nombres="", apellidos=""):
     usuario = str(usuario or "").strip()
     clave = str(clave or "")
     rol = str(rol or "").strip()
@@ -986,13 +998,51 @@ def _crear_usuario(usuario, clave, rol):
         raise ErrorComando(400, "la contraseña necesita al menos 8 caracteres")
     if rol not in ("administrador", "monitoreo"):
         raise ErrorComando(400, "el rol es administrador o monitoreo")
+    nombres = _texto_nombre(nombres, "el nombre")
+    apellidos = _texto_nombre(apellidos, "los apellidos")
     with _usuarios_lock:
         usuarios = _leer_o_semilla()
         if any(item.get("usuario") == usuario for item in usuarios):
             raise ErrorComando(400, "ese usuario ya existe")
-        usuarios.append({"usuario": usuario, "rol": rol, **_hash_clave(clave)})
+        usuarios.append({
+            "usuario": usuario,
+            "rol": rol,
+            "nombres": nombres,
+            "apellidos": apellidos,
+            **_hash_clave(clave),
+        })
         _escribir_usuarios(usuarios)
     return [_usuario_publico(item) for item in usuarios]
+
+
+def _aplicar_clave(item, clave):
+    clave = str(clave or "")
+    if len(clave) < 8:
+        raise ErrorComando(400, "la contraseña necesita al menos 8 caracteres")
+    item.update(_hash_clave(clave))
+
+
+def _guardar_cuenta(usuario, data, propia):
+    if not isinstance(data, dict):
+        raise ErrorComando(400, "el cuerpo debe ser un objeto")
+    usuario = str(usuario or "").strip()
+    nombres = _texto_nombre(data.get("nombres"), "el nombre")
+    apellidos = _texto_nombre(data.get("apellidos"), "los apellidos")
+    clave_nueva = str(data.get("clave_nueva") or "")
+    with _usuarios_lock:
+        usuarios = _leer_o_semilla()
+        item = next((x for x in usuarios if x.get("usuario") == usuario), None)
+        if item is None:
+            raise ErrorComando(404, "no está ese usuario")
+        if clave_nueva:
+            if propia and not _clave_coincide(str(data.get("clave_actual") or ""), item):
+                raise ErrorComando(400, "la contraseña actual no coincide")
+            _aplicar_clave(item, clave_nueva)
+        item["nombres"] = nombres
+        item["apellidos"] = apellidos
+        _escribir_usuarios(usuarios)
+        publico = _usuario_publico(item)
+    return publico
 
 
 def _quitar_usuario(usuario):
@@ -1209,6 +1259,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             datos = _sesion(self) or {}
             data["rol"] = rol
             data["usuario"] = datos.get("usuario") or ""
+            cuenta = _buscar_usuario(data["usuario"]) or {}
+            data["nombres"] = cuenta.get("nombres") or ""
+            data["apellidos"] = cuenta.get("apellidos") or ""
             if rol == "monitoreo":
                 data["lineas"] = []
                 data["cola"] = {"pendientes": [], "recientes": []}
@@ -1347,7 +1400,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not _puede_ver(self):
             self._json(401, {"ok": False, "detalle": "hay que iniciar sesión"})
             return
-        if not _es_admin(self) and ruta != "/salir":
+        if not _es_admin(self) and ruta not in ("/salir", "/cuenta"):
             self._json(403, {"ok": False, "detalle": "esta cuenta solo puede ver el panel"})
             return
         try:
@@ -1381,10 +1434,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif ruta == "/archivos/incorporar":
                 data = self._cuerpo_json()
                 self._json(200, _incorporar_guardado(data.get("nombre"), bool(data.get("reemplazar"))))
+            elif ruta == "/cuenta":
+                datos = _sesion(self) or {}
+                cuenta = _guardar_cuenta(datos.get("usuario"), self._cuerpo_json(), propia=True)
+                self._json(200, {"ok": True, "cuenta": cuenta})
             elif ruta == "/usuarios":
                 data = self._cuerpo_json()
-                cuentas = _crear_usuario(data.get("usuario"), data.get("clave"), data.get("rol"))
+                cuentas = _crear_usuario(data.get("usuario"), data.get("clave"), data.get("rol"), data.get("nombres"), data.get("apellidos"))
                 self._json(200, {"ok": True, "usuarios": cuentas})
+            elif ruta == "/usuarios/datos":
+                data = self._cuerpo_json()
+                _guardar_cuenta(data.get("usuario"), data, propia=False)
+                self._json(200, {"ok": True, "usuarios": [_usuario_publico(item) for item in _cargar_usuarios()]})
             elif ruta == "/usuarios/quitar":
                 data = self._cuerpo_json()
                 cuentas = _quitar_usuario(data.get("usuario"))

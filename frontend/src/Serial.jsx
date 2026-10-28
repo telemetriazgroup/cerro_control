@@ -30,6 +30,12 @@ export default function Serial({ lineas, enlaces, comandos, onAviso }) {
         Lo que entra por el TCP del controlador. Los equipos JSON siguen saliendo a {enlaces?.termoking || "TermoKing"} y {enlaces?.datos || "Datos"}.
         Un comando sale en el próximo espacio de unos 2 s entre respuestas.
       </p>
+      <h3 className="kicker">Línea</h3>
+      <div className="log mono">
+        {(lineas || []).length ? lineas.map(l => (
+          <div key={l.n}>{(l.hora || l.t || "") + "  " + (l.ip ? l.ip + "  " : "") + (l.texto || l.linea || "")}</div>
+        )) : "Esperando tramas."}
+      </div>
       <h3 className="kicker">Comandos</h3>
       {Object.entries(grupos).map(([grupo, lista]) => (
         <div key={grupo} style={{ marginBottom: 12 }}>
@@ -57,12 +63,6 @@ export default function Serial({ lineas, enlaces, comandos, onAviso }) {
           <button className="primario" type="submit">Enviar</button>
         </form>
       )}
-      <h3 className="kicker">Línea</h3>
-      <div className="log mono">
-        {(lineas || []).length ? lineas.map(l => (
-          <div key={l.n}>{(l.hora || l.t || "") + "  " + (l.ip ? l.ip + "  " : "") + (l.texto || l.linea || "")}</div>
-        )) : "Esperando tramas."}
-      </div>
     </section>
   );
 }

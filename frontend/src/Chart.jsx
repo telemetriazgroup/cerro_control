@@ -73,7 +73,7 @@ function fechaCorta(t) {
   return (t || "").replace("T", " ").slice(0, 16);
 }
 
-export default function Chart({ puntos, series, modo, titulo, archivo }) {
+export default function Chart({ puntos, series, modo, titulo, archivo, alto = 360 }) {
   const ref = useRef(null);
   const caja = useRef(null);
   const ventana = useRef([0, 0]);
@@ -121,7 +121,6 @@ export default function Chart({ puntos, series, modo, titulo, archivo }) {
     const dibujo = simplificar(recorte, series);
     const dibujar = () => {
       const ancho = padre.clientWidth || 640;
-      const alto = 360;
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(ancho * dpr);
       canvas.height = Math.floor(alto * dpr);
@@ -224,7 +223,7 @@ export default function Chart({ puntos, series, modo, titulo, archivo }) {
     const obs = new ResizeObserver(dibujar);
     obs.observe(padre);
     return () => obs.disconnect();
-  }, [puntos, series, modo, win, etiquetas]);
+  }, [puntos, series, modo, win, etiquetas, alto]);
 
   useEffect(() => {
     const canvas = ref.current;

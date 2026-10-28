@@ -64,6 +64,22 @@ function serieTemp(clave, label, color, on) {
   return { id: clave, label, color, on, pick: p => (p.temp || {})[clave] };
 }
 
+function distanciaZona(puntos, zona, objetivos) {
+  if (!zona) return "Las tres zonas juntas.";
+  let co2 = null;
+  let o2 = null;
+  for (let i = puntos.length - 1; i >= 0 && (co2 == null || o2 == null); i--) {
+    if (co2 == null) co2 = (puntos[i].co2 || [])[zona - 1];
+    if (o2 == null) o2 = (puntos[i].o2 || [])[zona - 1];
+  }
+  const setCo2 = Number(objetivos?.co2?.[String(zona)]);
+  const setO2 = Number(objetivos?.o2?.[String(zona)]);
+  const partes = [];
+  if (co2 != null && Number.isFinite(setCo2)) partes.push("CO₂ a " + Math.abs(co2 - setCo2).toFixed(1) + " del set " + setCo2);
+  if (o2 != null && Number.isFinite(setO2)) partes.push("O₂ a " + Math.abs(o2 - setO2).toFixed(1) + " del set " + setO2);
+  return partes.length ? partes.join(". ") + "." : "Sin lectura de esa zona en el rango.";
+}
+
 export default function History({ hoy, admin, onAviso }) {
   const dia = hoy || new Date().toISOString().slice(0, 10);
   const [desde, setDesde] = useState(dia + "T00:00");
@@ -73,6 +89,7 @@ export default function History({ hoy, admin, onAviso }) {
   const [gasesOn, setGasesOn] = useState(() => Object.fromEntries(GASES.map(g => [g[0] + g[1], true])));
   const [setsOn, setSetsOn] = useState(() => Object.fromEntries(SETS.map(g => ["set" + g[0] + g[1], true])));
   const [tempsOn, setTempsOn] = useState({ suministro: true, retorno: true, evaporador: false, condensador: false, set_point: true });
+  const [zona, setZona] = useState(1);
 
   const cargado = useRef(false);
   useEffect(() => {
@@ -96,10 +113,11 @@ export default function History({ hoy, admin, onAviso }) {
 
   const objetivos = data?.objetivos;
   const gases = useMemo(() => {
-    const medidas = GASES.map(g => serieGas(g[0], g[1], g[2], g[3], gasesOn[g[0] + g[1]] !== false));
-    const sets = SETS.map(g => serieSet(g[0], g[1], g[2], g[3], setsOn["set" + g[0] + g[1]] !== false, objetivos));
+    const deZona = (i) => !zona || i === zona - 1;
+    const medidas = GASES.filter(g => deZona(g[1])).map(g => serieGas(g[0], g[1], g[2], g[3], gasesOn[g[0] + g[1]] !== false));
+    const sets = SETS.filter(g => deZona(g[1])).map(g => serieSet(g[0], g[1], g[2], g[3], setsOn["set" + g[0] + g[1]] !== false, objetivos));
     return medidas.concat(sets);
-  }, [gasesOn, setsOn, objetivos]);
+  }, [gasesOn, setsOn, objetivos, zona]);
   const temps = useMemo(() => TEMPS.map(t => serieTemp(t[0], t[1], t[2], !!tempsOn[t[0]])), [tempsOn]);
   const puntos = data?.puntos || [];
 
@@ -140,8 +158,14 @@ export default function History({ hoy, admin, onAviso }) {
       <>
       <section className="bloque">
         <h2>Gases</h2>
+        <div className="zonas-graf">
+          {[1, 2, 3].map(z => (
+            <button key={z} className={"secundario" + (zona === z ? " activa" : "")} type="button" onClick={() => setZona(z)}>Zona {z}</button>
+          ))}
+          <button className={"secundario" + (zona === 0 ? " activa" : "")} type="button" onClick={() => setZona(0)}>Todas</button>
+        </div>
         <div className="historia">
-          <Chart puntos={puntos} series={gases} modo="gas" archivo="gases" titulo="CO₂ y O₂ frente a su set. La línea punteada es el objetivo. El 0 y el 25.5 no se dibujan. La gráfica guarda los quiebres del comportamiento." />
+          <Chart puntos={puntos} series={gases} modo="gas" archivo="gases" alto={560} titulo={"CO₂ y O₂ de la zona frente a su set. " + distanciaZona(puntos, zona, objetivos) + " La línea punteada es el objetivo."} />
           <Leyenda series={gases} onToggle={id => {
             if (id.startsWith("set")) setSetsOn(s => ({ ...s, [id]: s[id] === false }));
             else setGasesOn(s => ({ ...s, [id]: s[id] === false }));

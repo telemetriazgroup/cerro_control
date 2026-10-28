@@ -246,10 +246,10 @@
 <header>
   <div class="marca">
     <span>CP</span>
-    <div>
+  <div>
       <h1>Cerro Prieto</h1>
       <p id="sub">Esperando el ciclo del controlador</p>
-    </div>
+  </div>
   </div>
   <div class="lado">
     <div>
@@ -489,8 +489,8 @@
       </section>
     </div>
     <div id="tab-serial" hidden>
-      <section class="terminal">
-        <pre id="log"></pre>
+  <section class="terminal">
+    <pre id="log"></pre>
       </section>
       <p class="leyenda" id="json-nota"></p>
     </div>
@@ -503,9 +503,9 @@
           <label>Encendido<select id="par-on" required></select></label>
           <label>Apagado<select id="par-off" required></select></label>
           <button class="primario" type="submit">Guardar par</button>
-        </form>
+    </form>
         <div id="pares-lista"></div>
-      </section>
+  </section>
       <section class="bloque">
         <h2>Secuencias</h2>
         <p class="leyenda">Cada espera son los segundos después de que el paso anterior salió. Cero significa el hueco siguiente.</p>
@@ -518,7 +518,7 @@
           <button type="button" id="agregar-paso">Agregar paso</button>
         </form>
         <div id="sec-lista"></div>
-      </section>
+    </section>
       <section class="bloque">
         <h2>Reglas de CO₂ y O₂</h2>
         <p class="leyenda" id="flujo-vigente">Sin lectura vigente.</p>
@@ -539,7 +539,7 @@
           <button type="button" id="agregar-cond">Agregar condición</button>
         </form>
         <div id="reglas-lista"></div>
-      </section>
+    </section>
       <section class="bloque">
         <h2>Registro</h2>
         <form id="form-corridas" class="rango">
@@ -549,7 +549,7 @@
           <button class="primario" type="submit">Ver</button>
         </form>
         <div id="corridas-lista"></div>
-      </section>
+    </section>
     </div>
     <div id="tab-usuarios" hidden>
       <section class="bloque">
@@ -771,8 +771,8 @@ function pintarVivo(panel) {
       const p = document.createElement("p");
       p.textContent = "Aún no llega RIPENER ni REEFER_QUEST.";
       caja.appendChild(p);
-      return;
-    }
+    return;
+  }
     panel.rs.forEach(b => {
       const art = document.createElement("article");
       const h = document.createElement("h3");
@@ -1004,7 +1004,7 @@ function pintarCola(cola) {
   const firma = JSON.stringify(pendientes);
   if (caja.dataset.firma !== firma) {
     caja.dataset.firma = firma;
-    caja.replaceChildren();
+  caja.replaceChildren();
     if (!pendientes.length) {
       const p = document.createElement("p");
       p.className = "leyenda";
@@ -1966,8 +1966,8 @@ async function listarArchivos() {
       ? " · el día ya tiene " + nLecturas(archivo.lecturas_actuales)
       : " · el día todavía no está en el histórico";
     fila.textContent = archivo.nombre + " · " + archivo.fecha_display + estado + " ";
-    const boton = document.createElement("button");
-    boton.type = "button";
+      const boton = document.createElement("button");
+      boton.type = "button";
     boton.textContent = "Incorporar";
     boton.addEventListener("click", () => {
       incorporarGuardado(archivo.nombre, false).catch(e => mostrarAviso(e.message, true));

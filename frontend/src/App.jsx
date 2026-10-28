@@ -4,7 +4,7 @@ import Live from "./Live.jsx";
 import History from "./History.jsx";
 import Serial from "./Serial.jsx";
 import Comandos from "./Comandos.jsx";
-import Usuarios from "./Usuarios.jsx";
+import Usuarios, { Perfil } from "./Usuarios.jsx";
 import Flujo from "./Flujo.jsx";
 
 const BASE = [
@@ -31,6 +31,9 @@ export default function App() {
   const [tab, setTab] = useState("vivo");
   const [snap, setSnap] = useState(null);
   const [aviso, setAviso] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const [perfil, setPerfil] = useState(false);
+  const [mio, setMio] = useState(null);
   const [fecha, setFecha] = useState(() => fechaBarra());
 
   function onAviso(texto, malo) {
@@ -69,6 +72,15 @@ export default function App() {
   const actual = pestanas.some(p => p[0] === tab) ? tab : "vivo";
   const panel = snap?.panel;
   const usuario = snap?.usuario || "";
+  const nombres = mio?.nombres ?? snap?.nombres ?? "";
+  const apellidos = mio?.apellidos ?? snap?.apellidos ?? "";
+  const visible = [nombres, apellidos].filter(Boolean).join(" ") || usuario;
+
+  function ir(id) {
+    setPerfil(false);
+    setMenu(false);
+    setTab(id);
+  }
 
   return (
     <div className="app">
@@ -78,7 +90,7 @@ export default function App() {
         </div>
         <nav className="menu">
           {pestanas.map(([id, nombre]) => (
-            <button key={id} type="button" className={actual === id ? "activa" : ""} onClick={() => setTab(id)}>
+            <button key={id} type="button" className={!perfil && actual === id ? "activa" : ""} onClick={() => ir(id)}>
               <Icono nombre={id} />
               <span>{nombre}</span>
             </button>
@@ -87,28 +99,48 @@ export default function App() {
       </aside>
       <div className="cuerpo">
         <header className="barra">
-          <h1>{TITULOS[actual]} · plantas industriales</h1>
+          <h1>{(perfil ? "Mi perfil" : TITULOS[actual])} · plantas industriales</h1>
           <div className="barra-der">
             <span className="fecha">{fecha}</span>
             <span className="idioma">Español</span>
             <div className="quien">
-              <span className="avatar">{iniciales(usuario)}</span>
-              <span>
-                <strong>{usuario}</strong>
-                <small>{rol ? nombreRol(rol) : ""}</small>
-              </span>
-              <button className="salir" type="button" onClick={async () => { await fetch("/salir", { method: "POST" }); location.href = "/login"; }}>Salir</button>
+              <button className="secundario" type="button" onClick={() => setMenu(v => !v)}>
+                <span className="avatar">{iniciales(visible)}</span>
+                <span>
+                  <strong>{visible}</strong>
+                  <small>{rol ? nombreRol(rol) : ""}</small>
+                </span>
+              </button>
+              {menu && (
+                <div className="menu-usuario">
+                  <div style={{ padding: "6px 10px 8px" }}>
+                    <strong>{visible}</strong>
+                    <small style={{ display: "block", color: "var(--suave)" }}>{usuario} · {rol ? nombreRol(rol) : ""}</small>
+                  </div>
+                  <button type="button" onClick={() => { setPerfil(true); setMenu(false); }}>Mi perfil</button>
+                  <button className="salir-rojo" type="button" onClick={async () => { await fetch("/salir", { method: "POST" }); location.href = "/login"; }}>Cerrar sesión</button>
+                </div>
+              )}
             </div>
           </div>
         </header>
         <main className="pagina">
           {aviso && <div className={aviso.malo ? "aviso malo" : "aviso"}>{aviso.texto}</div>}
-          {actual === "vivo" && <Live panel={panel} admin={admin} onAviso={onAviso} onHistorico={() => setTab("hist")} />}
-          {actual === "hist" && <History hoy={snap?.hoy} admin={admin} onAviso={onAviso} />}
-          {admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} comandos={snap?.config?.comandos} onAviso={onAviso} />}
-          {admin && actual === "cmd" && <Comandos comandos={snap?.config?.comandos} cola={snap?.cola} hoy={snap?.hoy} onAviso={onAviso} />}
-          {admin && actual === "usuarios" && <Usuarios onAviso={onAviso} />}
-          {admin && actual === "flujo" && <Flujo onAviso={onAviso} />}
+          {perfil && (
+            <Perfil
+              usuario={usuario}
+              nombres={nombres}
+              apellidos={apellidos}
+              onAviso={onAviso}
+              onListo={cuenta => setMio({ nombres: cuenta.nombres || "", apellidos: cuenta.apellidos || "" })}
+            />
+          )}
+          {!perfil && actual === "vivo" && <Live panel={panel} admin={admin} onAviso={onAviso} onHistorico={() => ir("hist")} />}
+          {!perfil && actual === "hist" && <History hoy={snap?.hoy} admin={admin} onAviso={onAviso} />}
+          {!perfil && admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} comandos={snap?.config?.comandos} onAviso={onAviso} />}
+          {!perfil && admin && actual === "cmd" && <Comandos comandos={snap?.config?.comandos} cola={snap?.cola} hoy={snap?.hoy} onAviso={onAviso} />}
+          {!perfil && admin && actual === "usuarios" && <Usuarios onAviso={onAviso} />}
+          {!perfil && admin && actual === "flujo" && <Flujo onAviso={onAviso} />}
         </main>
       </div>
     </div>
