@@ -10,6 +10,14 @@ const GASES = [
   ["o2", 1, "O₂ zona 2", "#60a5fa"],
   ["o2", 2, "O₂ zona 3", "#93c5fd"],
 ];
+const SETS = [
+  ["co2", 0, "Set CO₂ zona 1", "#14532d"],
+  ["co2", 1, "Set CO₂ zona 2", "#166534"],
+  ["co2", 2, "Set CO₂ zona 3", "#4d7c0f"],
+  ["o2", 0, "Set O₂ zona 1", "#1e3a8a"],
+  ["o2", 1, "Set O₂ zona 2", "#1d4ed8"],
+  ["o2", 2, "Set O₂ zona 3", "#0369a1"],
+];
 const TEMPS = [
   ["suministro", "Suministro", "#1b7f4a"],
   ["retorno", "Retorno", "#c24141"],
@@ -17,9 +25,40 @@ const TEMPS = [
   ["condensador", "Condensador", "#d97706"],
   ["set_point", "Set point", "#e0b000"],
 ];
+const REEFER = [
+  ["power", "Equipo"],
+  ["set_point", "Set point"],
+  ["suministro", "Suministro"],
+  ["retorno", "Retorno"],
+  ["evaporador", "Evaporador"],
+  ["condensador", "Condensador"],
+  ["sensor_1", "Sensor 1"],
+  ["sensor_2", "Sensor 2"],
+  ["sensor_3", "Sensor 3"],
+  ["sensor_4", "Sensor 4"],
+  ["humedad", "Humedad"],
+  ["ventilacion", "Ventilación"],
+  ["co2", "CO₂ reefer"],
+  ["o2", "O₂ reefer"],
+  ["sp_humedad", "SP humedad"],
+  ["sp_co2", "SP CO₂"],
+];
 
 function serieGas(clave, i, label, color, on) {
   return { id: clave + i, label, color, on, pick: p => (p[clave] || [])[i] };
+}
+function serieSet(clave, i, label, color, on, objetivos) {
+  return {
+    id: "set" + clave + i,
+    label,
+    color,
+    on,
+    plano: true,
+    pick: () => {
+      const v = objetivos?.[clave]?.[String(i + 1)];
+      return v == null || v === "" ? null : Number(v);
+    },
+  };
 }
 function serieTemp(clave, label, color, on) {
   return { id: clave, label, color, on, pick: p => (p.temp || {})[clave] };
@@ -30,7 +69,9 @@ export default function History({ hoy, admin, onAviso }) {
   const [desde, setDesde] = useState(dia + "T00:00");
   const [hasta, setHasta] = useState(dia + "T23:00");
   const [data, setData] = useState(null);
+  const [cargando, setCargando] = useState(false);
   const [gasesOn, setGasesOn] = useState(() => Object.fromEntries(GASES.map(g => [g[0] + g[1], true])));
+  const [setsOn, setSetsOn] = useState(() => Object.fromEntries(SETS.map(g => ["set" + g[0] + g[1], true])));
   const [tempsOn, setTempsOn] = useState({ suministro: true, retorno: true, evaporador: false, condensador: false, set_point: true });
 
   const cargado = useRef(false);
@@ -45,13 +86,20 @@ export default function History({ hoy, admin, onAviso }) {
   }, [hoy]);
 
   async function buscar(d = desde, h = hasta) {
+    setCargando(true);
     try {
-      const q = new URLSearchParams({ desde: d, hasta: h });
+      const q = new URLSearchParams({ desde: d, hasta: h, completo: "1" });
       setData(await jget("/lecturas?" + q.toString()));
     } catch (e) { onAviso(e.message, true); }
+    finally { setCargando(false); }
   }
 
-  const gases = useMemo(() => GASES.map(g => serieGas(g[0], g[1], g[2], g[3], gasesOn[g[0] + g[1]] !== false)), [gasesOn]);
+  const objetivos = data?.objetivos;
+  const gases = useMemo(() => {
+    const medidas = GASES.map(g => serieGas(g[0], g[1], g[2], g[3], gasesOn[g[0] + g[1]] !== false));
+    const sets = SETS.map(g => serieSet(g[0], g[1], g[2], g[3], setsOn["set" + g[0] + g[1]] !== false, objetivos));
+    return medidas.concat(sets);
+  }, [gasesOn, setsOn, objetivos]);
   const temps = useMemo(() => TEMPS.map(t => serieTemp(t[0], t[1], t[2], !!tempsOn[t[0]])), [tempsOn]);
   const puntos = data?.puntos || [];
 
@@ -76,29 +124,41 @@ export default function History({ hoy, admin, onAviso }) {
         <form className="rango" onSubmit={ev => { ev.preventDefault(); buscar(); }}>
           <label>Desde<input type="datetime-local" step="3600" value={desde} onChange={e => setDesde(e.target.value)} /></label>
           <label>Hasta<input type="datetime-local" step="3600" value={hasta} onChange={e => setHasta(e.target.value)} /></label>
-          <button className="primario" type="submit">Buscar</button>
+          <button className="primario" type="submit" disabled={cargando}>{cargando ? "Buscando…" : "Buscar"}</button>
         </form>
-        {data && <p className="leyenda" style={{ marginTop: 10 }}>{data.desde} — {data.hasta} · {data.total} {data.total === 1 ? "registro" : "registros"}{data.aviso ? " · " + data.aviso : ""}</p>}
+        {data && !cargando && <p className="leyenda" style={{ marginTop: 10 }}>{data.desde} — {data.hasta} · {data.total} {data.total === 1 ? "registro" : "registros"} en la tabla · {data.grafica} en la serie{data.aviso ? " · " + data.aviso : ""}</p>}
       </section>
 
+      {cargando && (
+        <div className="cargando" role="status">
+          <span className="giro" />
+          Buscando información…
+        </div>
+      )}
+
+      {!cargando && (
+      <>
       <section className="bloque">
         <h2>Gases</h2>
         <div className="historia">
-          <Chart puntos={puntos} series={gases} modo="gas" titulo="CO₂ y O₂, %. El 0 y el 25.5 no se dibujan: queda el último valor válido." />
-          <Leyenda series={gases} onToggle={id => setGasesOn(s => ({ ...s, [id]: s[id] === false }))} />
+          <Chart puntos={puntos} series={gases} modo="gas" archivo="gases" titulo="CO₂ y O₂ frente a su set. La línea punteada es el objetivo. El 0 y el 25.5 no se dibujan. La gráfica guarda los quiebres del comportamiento." />
+          <Leyenda series={gases} onToggle={id => {
+            if (id.startsWith("set")) setSetsOn(s => ({ ...s, [id]: s[id] === false }));
+            else setGasesOn(s => ({ ...s, [id]: s[id] === false }));
+          }} />
         </div>
       </section>
       <section className="bloque">
         <h2>Temperaturas del reefer</h2>
         <div className="historia">
-          <Chart puntos={puntos} series={temps} modo="temp" titulo="La misma hora que el CO₂ y el O₂ de ese ciclo. °C." />
+          <Chart puntos={puntos} series={temps} modo="temp" archivo="temperaturas" titulo="La misma hora que el CO₂ y el O₂ de ese ciclo. °C. La rueda del mouse y el rango de fechas acercan un tramo." />
           <Leyenda series={temps} onToggle={id => setTempsOn(s => ({ ...s, [id]: !s[id] }))} />
         </div>
       </section>
 
       <section className="bloque">
         <h2>Datos en tabla</h2>
-        <p className="leyenda">La fila de arriba es la más reciente.</p>
+        <p className="leyenda">La fila de arriba es la más reciente. Aquí están todos los registros del rango, no solo los puntos de la gráfica.</p>
         <div className="tabla-marco">
           <table>
             <thead>
@@ -106,7 +166,7 @@ export default function History({ hoy, admin, onAviso }) {
                 <th>Fecha</th>
                 <th>CO₂ 1</th><th>CO₂ 2</th><th>CO₂ 3</th>
                 <th>O₂ 1</th><th>O₂ 2</th><th>O₂ 3</th>
-                <th>Set point</th><th>Suministro</th><th>Retorno</th><th>Evaporador</th><th>Condensador</th>
+                {REEFER.map(([clave, nombre]) => <th key={clave}>{nombre}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -117,7 +177,7 @@ export default function History({ hoy, admin, onAviso }) {
                     <td>{fila.fecha}</td>
                     {(fila.zonas || []).map(z => <td key={"c" + z.zona}>{textoNum(z.co2?.valor)} {flecha(z.co2?.tendencia)}</td>)}
                     {(fila.zonas || []).map(z => <td key={"o" + z.zona}>{textoNum(z.o2?.valor)} {flecha(z.o2?.tendencia)}</td>)}
-                    {["set_point", "suministro", "retorno", "evaporador", "condensador"].map(k => <td key={k}>{r[k]?.texto || "—"}</td>)}
+                    {REEFER.map(([k]) => <td key={k}>{r[k]?.texto || "—"}</td>)}
                   </tr>
                 );
               })}
@@ -125,6 +185,8 @@ export default function History({ hoy, admin, onAviso }) {
           </table>
         </div>
       </section>
+      </>
+      )}
 
       {admin && <Analisis data={data} onAviso={onAviso} />}
     </>

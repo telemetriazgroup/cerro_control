@@ -105,8 +105,8 @@ export default function App() {
           {aviso && <div className={aviso.malo ? "aviso malo" : "aviso"}>{aviso.texto}</div>}
           {actual === "vivo" && <Live panel={panel} admin={admin} onAviso={onAviso} onHistorico={() => setTab("hist")} />}
           {actual === "hist" && <History hoy={snap?.hoy} admin={admin} onAviso={onAviso} />}
-          {admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} />}
-          {admin && actual === "cmd" && <Comandos comandos={snap?.config?.comandos} cola={snap?.cola} onAviso={onAviso} />}
+          {admin && actual === "serial" && <Serial lineas={snap?.lineas} enlaces={snap?.enlaces} comandos={snap?.config?.comandos} onAviso={onAviso} />}
+          {admin && actual === "cmd" && <Comandos comandos={snap?.config?.comandos} cola={snap?.cola} hoy={snap?.hoy} onAviso={onAviso} />}
           {admin && actual === "usuarios" && <Usuarios onAviso={onAviso} />}
           {admin && actual === "flujo" && <Flujo onAviso={onAviso} />}
         </main>

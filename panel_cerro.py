@@ -633,6 +633,7 @@ class Panel:
                     "titulo": titulo,
                     "descripcion": descripcion,
                     "trama": trama,
+                    "archivado": bool(item.get("archivado")),
                 })
             self.config["comandos"] = salida
             self.config["rev"] = int(self.config.get("rev") or 0) + 1
@@ -855,7 +856,7 @@ class Panel:
         with self._lock:
             return self._observar_cmd(str(ip), texto, "interfaz" if flujo == "out" else "serial", cuando)
 
-    def historial_comandos(self, desde_s, hasta_s, ip=None, origen=None, familia=None):
+    def historial_comandos(self, desde_s, hasta_s, ip=None, origen=None, familia=None, limite=500):
         inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
         with self._lock:
             filas = self._leer_comandos(inicio.date(), (fin - datetime.timedelta(seconds=1)).date())
@@ -873,8 +874,23 @@ class Panel:
             "hasta": (fin - datetime.timedelta(seconds=1)).isoformat(timespec="seconds"),
             "aviso": aviso,
             "total": len(pub),
-            "comandos": pub[:500],
+            "comandos": pub if not limite else pub[:limite],
         }
+
+    def reporte_comandos(self, desde_s, hasta_s, formato, ip=None, origen=None, familia=None):
+        formato = (formato or "").lower()
+        if formato not in ("xlsx", "pdf"):
+            raise PanelError(400, "el formato es xlsx o pdf")
+        data = self.historial_comandos(desde_s, hasta_s, ip, origen, familia, limite=None)
+        filas = data["comandos"]
+        nombre = f"comandos_{str(data['desde'])[:13].replace(':', '')}_{str(data['hasta'])[:13].replace(':', '')}.{formato}"
+        if formato == "xlsx":
+            cuerpo = _xlsx_comandos(filas, data.get("desde"), data.get("hasta"))
+            tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            cuerpo = _pdf_comandos(filas, data.get("desde"), data.get("hasta"))
+            tipo = "application/pdf"
+        return cuerpo, tipo, nombre
 
     def lecturas(self, desde_s, hasta_s, ip=None, completo=False):
         inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
@@ -956,7 +972,7 @@ class Panel:
         filas = list(reversed(data["tabla"]))
         nombre = f"cerro_{data['desde'][:13].replace(':', '')}_{data['hasta'][:13].replace(':', '')}.{formato}"
         if formato == "xlsx":
-            cuerpo = _xlsx_reporte(filas)
+            cuerpo = _xlsx_reporte(filas, data.get("desde"), data.get("hasta"))
             tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             cuerpo = _pdf_reporte(filas, data.get("desde"), data.get("hasta"))
@@ -2267,10 +2283,21 @@ def _fila_reporte(fila):
     return celdas
 
 
-def _xlsx_reporte(filas):
+def _logo_png():
+    base = os.path.dirname(os.path.abspath(__file__))
+    for rel in ("frontend/dist/marca/logo-ztrack.png", "frontend/public/marca/logo-ztrack.png"):
+        ruta = os.path.join(base, rel)
+        if os.path.isfile(ruta):
+            with open(ruta, "rb") as fh:
+                return fh.read()
+    return b""
+
+
+def _xlsx_reporte(filas, desde="", hasta=""):
     import zipfile
     from io import BytesIO
     cabecera = _columnas_reporte()
+    logo = _logo_png()
     filas_xml = []
     def celda(ref, valor):
         if isinstance(valor, (int, float)) and not isinstance(valor, bool):
@@ -2282,19 +2309,29 @@ def _xlsx_reporte(filas):
             letra = chr(ord("A") + i) if i < 26 else "A" + chr(ord("A") + i - 26)
             partes.append(celda(f"{letra}{n}", valor))
         return f'<row r="{n}">{"".join(partes)}</row>'
-    filas_xml.append(fila_xml(1, cabecera))
-    for n, fila in enumerate(filas, start=2):
+    filas_xml.append(fila_xml(1, ["ZTRACK"]))
+    filas_xml.append(fila_xml(2, ["Monitoreo de plantas industriales"]))
+    filas_xml.append(fila_xml(3, [f"{desde}  a  {hasta}"]))
+    filas_xml.append(fila_xml(5, cabecera))
+    for n, fila in enumerate(filas, start=6):
         filas_xml.append(fila_xml(n, _fila_reporte(fila)))
+    dibujo = '<drawing r:id="rId1"/>' if logo else ""
+    extra_ns = ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' if logo else ""
     hoja = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<sheetData>' + "".join(filas_xml) + '</sheetData></worksheet>'
+        f'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"{extra_ns}>'
+        '<sheetData>' + "".join(filas_xml) + '</sheetData>' + dibujo + '</worksheet>'
     )
+    tipos_logo = (
+        '<Default Extension="png" ContentType="image/png"/>'
+        '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+    ) if logo else ""
     tipos = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         '<Default Extension="xml" ContentType="application/xml"/>'
+        + tipos_logo +
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
         '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         '</Types>'
@@ -2317,6 +2354,22 @@ def _xlsx_reporte(filas):
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
         '</Relationships>'
     )
+    dibujo_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<xdr:oneCellAnchor>'
+        '<xdr:from><xdr:col>8</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+        '<xdr:ext cx="2926080" cy="1138000"/>'
+        '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="logo"/>'
+        '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+        '<xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+        '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2926080" cy="1138000"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>'
+        '<xdr:clientData/>'
+        '</xdr:oneCellAnchor></xdr:wsDr>'
+    )
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", tipos)
@@ -2324,6 +2377,21 @@ def _xlsx_reporte(filas):
         zf.writestr("xl/workbook.xml", libro)
         zf.writestr("xl/_rels/workbook.xml.rels", libro_rels)
         zf.writestr("xl/worksheets/sheet1.xml", hoja)
+        if logo:
+            zf.writestr("xl/media/logo.png", logo)
+            zf.writestr("xl/drawings/drawing1.xml", dibujo_xml)
+            zf.writestr("xl/drawings/_rels/drawing1.xml.rels", (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo.png"/>'
+                '</Relationships>'
+            ))
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>'
+                '</Relationships>'
+            ))
     return buf.getvalue()
 
 
@@ -2352,7 +2420,7 @@ def _pdf_reporte(filas, desde, hasta):
             corto.append(texto)
         filas_txt.append(corto)
     alto, margen, fila_h = 595, 18, 11
-    y0 = alto - 36
+    y0 = alto - 48
     capacidad = max(1, int((y0 - 24) / fila_h) - 1)
     paginas = [filas_txt[i:i + capacidad] for i in range(0, max(1, len(filas_txt)), capacidad)] or [[]]
     objetos = []
@@ -2361,7 +2429,10 @@ def _pdf_reporte(filas, desde, hasta):
         return len(objetos)
     kids = []
     for indice, bloque in enumerate(paginas, start=1):
-        lineas = [f"BT /F1 8 Tf 18 {alto - 22} Td ({_pdf_esc('Cerro Prieto  ' + str(desde or '') + '  a  ' + str(hasta or '') + '   pag ' + str(indice))}) Tj ET"]
+        lineas = [
+            f"BT /F1 11 Tf 18 {alto - 20} Td ({_pdf_esc('ZTRACK')}) Tj ET",
+            f"BT /F1 8 Tf 78 {alto - 20} Td ({_pdf_esc('Monitoreo de plantas industriales   ' + str(desde or '') + '  a  ' + str(hasta or '') + '   pag ' + str(indice))}) Tj ET",
+        ]
         y = y0
         def pintar(valores, negrita):
             nonlocal y
@@ -2398,6 +2469,190 @@ def _pdf_reporte(filas, desde, hasta):
         offsets.append(len(salida))
         salida.extend(f"{i} 0 obj\n".encode())
         salida.extend(cuerpo)
+        salida.extend(b"\nendobj\n")
+    xref = len(salida)
+    salida.extend(f"xref\n0 {len(objetos) + 1}\n".encode())
+    salida.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        salida.extend(f"{off:010d} 00000 n \n".encode())
+    salida.extend(f"trailer << /Size {len(objetos) + 1} /Root {catalogo} 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+    return bytes(salida)
+
+
+def _filas_comandos(filas):
+    cabecera = ["Fecha", "IP", "Origen", "Familia", "Trama", "Respuesta", "Espera s", "Δ anterior s"]
+    cuerpo = []
+    for fila in filas:
+        cuerpo.append([
+            fila.get("fecha") or "",
+            fila.get("ip") or "",
+            fila.get("origen") or "",
+            fila.get("familia") or "",
+            fila.get("trama") or "",
+            fila.get("respuesta") or "",
+            "" if fila.get("espera_s") is None else fila.get("espera_s"),
+            "" if fila.get("delta_anterior_s") is None else fila.get("delta_anterior_s"),
+        ])
+    return cabecera, cuerpo
+
+
+def _xlsx_comandos(filas, desde="", hasta=""):
+    import zipfile
+    from io import BytesIO
+    cabecera, cuerpo = _filas_comandos(filas)
+    logo = _logo_png()
+
+    def letra(i):
+        return chr(ord("A") + i) if i < 26 else "A" + chr(ord("A") + i - 26)
+
+    def celda(ref, valor):
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            return f'<c r="{ref}"><v>{valor}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{_xml(valor)}</t></is></c>'
+
+    def fila_xml(n, valores):
+        partes = [celda(f"{letra(i)}{n}", valor) for i, valor in enumerate(valores)]
+        return f'<row r="{n}">{"".join(partes)}</row>'
+
+    filas_xml = [
+        fila_xml(1, ["ZTRACK"]),
+        fila_xml(2, ["Historial de comandos"]),
+        fila_xml(3, [f"{desde}  a  {hasta}"]),
+        fila_xml(5, cabecera),
+    ]
+    for n, valores in enumerate(cuerpo, start=6):
+        filas_xml.append(fila_xml(n, valores))
+    dibujo = '<drawing r:id="rId1"/>' if logo else ""
+    extra_ns = ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' if logo else ""
+    hoja = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"{extra_ns}>'
+        '<sheetData>' + "".join(filas_xml) + '</sheetData>' + dibujo + '</worksheet>'
+    )
+    tipos_logo = (
+        '<Default Extension="png" ContentType="image/png"/>'
+        '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+    ) if logo else ""
+    tipos = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        + tipos_logo +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    libro = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Comandos" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    libro_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+    dibujo_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<xdr:oneCellAnchor>'
+        '<xdr:from><xdr:col>6</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+        '<xdr:ext cx="2926080" cy="1138000"/>'
+        '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="logo"/>'
+        '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+        '<xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+        '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2926080" cy="1138000"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>'
+        '<xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>'
+    )
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", tipos)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("xl/workbook.xml", libro)
+        zf.writestr("xl/_rels/workbook.xml.rels", libro_rels)
+        zf.writestr("xl/worksheets/sheet1.xml", hoja)
+        if logo:
+            zf.writestr("xl/media/logo.png", logo)
+            zf.writestr("xl/drawings/drawing1.xml", dibujo_xml)
+            zf.writestr("xl/drawings/_rels/drawing1.xml.rels", (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo.png"/>'
+                '</Relationships>'
+            ))
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>'
+                '</Relationships>'
+            ))
+    return buf.getvalue()
+
+
+def _pdf_comandos(filas, desde, hasta):
+    cabecera, cuerpo = _filas_comandos(filas)
+    anchos = [90, 70, 50, 55, 180, 120, 45, 55]
+    alto, margen, fila_h = 595, 18, 12
+    y0 = alto - 48
+    capacidad = max(1, int((y0 - 24) / fila_h) - 1)
+    paginas = [cuerpo[i:i + capacidad] for i in range(0, max(1, len(cuerpo)), capacidad)] or [[]]
+    objetos = []
+
+    def agregar(contenido):
+        objetos.append(contenido)
+        return len(objetos)
+
+    kids = []
+    for indice, bloque in enumerate(paginas, start=1):
+        lineas = [
+            f"BT /F1 11 Tf 18 {alto - 20} Td ({_pdf_esc('ZTRACK')}) Tj ET",
+            f"BT /F1 8 Tf 78 {alto - 20} Td ({_pdf_esc('Historial de comandos   ' + str(desde or '') + '  a  ' + str(hasta or '') + '   pag ' + str(indice))}) Tj ET",
+        ]
+        y = y0
+
+        def pintar(valores):
+            nonlocal y
+            x = margen
+            for texto, ancho in zip(valores, anchos):
+                lineas.append(f"BT /F1 7 Tf {x:.1f} {y:.1f} Td ({_pdf_esc(texto)}) Tj ET")
+                x += ancho
+            y -= fila_h
+
+        pintar(cabecera)
+        for valores in bloque:
+            pintar(["" if v is None else str(v) for v in valores])
+        stream = "\n".join(lineas).encode("latin-1", "replace")
+        kids.append(agregar(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"))
+    recursos = agregar(b"<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>")
+    paginas_ids = []
+    for contenido in kids:
+        paginas_ids.append(agregar(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Contents {contenido} 0 R /Resources {recursos} 0 R >>".encode()
+        ))
+    hijos = " ".join(f"{n} 0 R" for n in paginas_ids)
+    paginas_obj = len(objetos) + 1
+    for pagina in paginas_ids:
+        objetos[pagina - 1] = objetos[pagina - 1].replace(b"/Parent 2 0 R", f"/Parent {paginas_obj} 0 R".encode())
+    agregar(f"<< /Type /Pages /Count {len(paginas_ids)} /Kids [{hijos}] >>".encode())
+    catalogo = agregar(f"<< /Type /Catalog /Pages {paginas_obj} 0 R >>".encode())
+    salida = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, cuerpo_pdf in enumerate(objetos, start=1):
+        offsets.append(len(salida))
+        salida.extend(f"{i} 0 obj\n".encode())
+        salida.extend(cuerpo_pdf)
         salida.extend(b"\nendobj\n")
     xref = len(salida)
     salida.extend(f"xref\n0 {len(objetos) + 1}\n".encode())

@@ -130,7 +130,31 @@ button { cursor: pointer; }
 .meta { margin-top: 4px; font-size: 12px; color: var(--suave); }
 
 .zonas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.zona { border: 1px solid var(--linea); border-radius: 14px; padding: 14px; }
+.zona { border: 1px solid var(--linea); border-radius: 14px; padding: 14px; background: #fff; }
+.zona.activa { background: #e8f7ee; border-color: #86efac; }
+.zona.activa h3 { color: #166534; }
+.zona.activa .tarjeta { background: #f4fdf7; border-color: #bbf7d0; }
+.fila-valvulas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.valvula { border: 1px solid var(--linea); border-radius: 12px; padding: 12px 14px; background: #fff; }
+.valvula .eti { color: var(--suave); font-size: 13px; }
+.valvula .valor { margin-top: 6px; font-size: 18px; font-weight: 650; }
+.valvula.on { background: #e8f7ee; border-color: #86efac; }
+.valvula.on .valor { color: #17803d; }
+.cargando {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 140px; margin-bottom: 16px; border: 1px dashed #c5d0dc; border-radius: 14px;
+  background: #f8fafc; color: #334155; font-weight: 650;
+}
+.giro {
+  width: 18px; height: 18px; border: 2px solid #d0d7e2; border-top-color: #17803d;
+  border-radius: 50%; animation: girar 0.8s linear infinite;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
+.controles-graf { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.controles-graf label { display: flex; align-items: center; gap: 6px; color: var(--texto); font-size: 13px; }
+.rango-graf { display: grid; grid-template-columns: 148px 1fr 148px; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--suave); }
+.rango-graf .barras { display: grid; gap: 2px; }
+.rango-graf input[type="range"] { width: 100%; }
 .zona h3 { margin: 0 0 10px; font-size: 14px; }
 .par-gas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .gas .eti { font-size: 12px; color: var(--suave); }
@@ -179,7 +203,8 @@ th { color: var(--suave); font-weight: 600; font-size: 12px; position: sticky; t
   .menu { flex-direction: row; overflow-x: auto; }
   .menu button { width: auto; white-space: nowrap; }
   .barra { flex-wrap: wrap; }
-  .estatus, .rejilla { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .estatus, .rejilla, .fila-valvulas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rango-graf { grid-template-columns: 1fr; }
   .zonas, .historia { grid-template-columns: 1fr; }
   .tope, .cabecera-eq, .pie-analisis { flex-direction: column; }
 }

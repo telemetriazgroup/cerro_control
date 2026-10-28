@@ -1187,8 +1187,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             ip = (consulta.get("ip") or [None])[0]
             if ip:
                 ip = ip.strip() or None
+            completo = (consulta.get("completo") or ["0"])[0] in ("1", "true", "si")
             try:
-                self._json(200, panel.lecturas(desde, hasta, ip))
+                self._json(200, panel.lecturas(desde, hasta, ip, completo))
             except PanelError as e:
                 self._json(e.status, {"ok": False, "detalle": e.detalle})
         elif ruta == "/serial":
@@ -1225,10 +1226,23 @@ class ApiHandler(BaseHTTPRequestHandler):
             familia = (consulta.get("familia") or [None])[0]
             if ip:
                 ip = ip.strip() or None
+            formato = (consulta.get("formato") or [""])[0].lower()
             try:
-                self._json(200, panel.historial_comandos(desde, hasta, ip, origen, familia))
+                if formato in ("xlsx", "pdf"):
+                    cuerpo, tipo, nombre = panel.reporte_comandos(desde, hasta, formato, ip, origen, familia)
+                else:
+                    self._json(200, panel.historial_comandos(desde, hasta, ip, origen, familia))
+                    return
             except PanelError as e:
                 self._json(e.status, {"ok": False, "detalle": e.detalle})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", tipo)
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(cuerpo)
         elif ruta == "/reporte":
             consulta = parse_qs(urlparse(self.path).query)
             hoy = ahora().date().isoformat()

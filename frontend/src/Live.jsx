@@ -95,13 +95,12 @@ export default function Live({ panel, admin, onAviso, onHistorico }) {
       <h3 className="kicker">Estatus reefer</h3>
       <p className="leyenda">Temperaturas del REEFER_QUEST de este ciclo. El condensador desde 35 °C se marca caliente.</p>
       <div className="estatus">
-        {ESTATUS.concat(EXTRA).map(([clave, nombre, icono, color]) => {
+        {ESTATUS.map(([clave, nombre, icono, color]) => {
           const c = campo(reefer, clave);
           const clase = c.clase === "caliente" ? "caliente" : clave === "power" && equipo === "ON" ? "ok" : "";
-          const unidad = clave === "power" ? "" : (c.unidad || (clave.startsWith("set") || ["suministro", "retorno", "evaporador", "condensador"].includes(clave) ? "°C" : ""));
           const valor = valorCampo(clave, c);
           return (
-            <Tarjeta key={clave} nombre={nombre} icono={icono} color={color} clase={clase} valor={valor} unidad={valor === "—" ? "" : unidad} />
+            <Tarjeta key={clave} nombre={nombre} icono={icono} color={color} clase={clase} valor={valor} unidad={clave === "power" || valor === "—" ? "" : "°C"} />
           );
         })}
       </div>
@@ -110,18 +109,19 @@ export default function Live({ panel, admin, onAviso, onHistorico }) {
         <span className="plegado-izq">
           <IconoMini nombre="lista" />
           <span>
-            <strong>Datos del reefer</strong>
-            <small>Sensores de temperatura del mismo REEFER_QUEST.</small>
+            <strong>{abierto ? "Ocultar datos del reefer" : "Ver más datos del reefer"}</strong>
+            <small>Humedad, ventilación, sensores y consignas del mismo REEFER_QUEST.</small>
           </span>
         </span>
         <span className={abierto ? "chev abierto" : "chev"}>⌄</span>
       </button>
       {abierto && (
         <div className="estatus" style={{ marginTop: 12 }}>
-          {[["sensor_1", "Sensor 1", "termo", "#64748b"], ["sensor_2", "Sensor 2", "termo", "#64748b"], ["sensor_3", "Sensor 3", "termo", "#64748b"], ["sensor_4", "Sensor 4", "termo", "#64748b"]].map(([clave, nombre, icono, color]) => {
+          {EXTRA.concat([["sensor_1", "Sensor 1", "termo", "#64748b"], ["sensor_2", "Sensor 2", "termo", "#64748b"], ["sensor_3", "Sensor 3", "termo", "#64748b"], ["sensor_4", "Sensor 4", "termo", "#64748b"]]).map(([clave, nombre, icono, color]) => {
             const c = campo(reefer, clave);
+            const valor = valorCampo(clave, c);
             const unidad = c.unidad || "";
-            return <Tarjeta key={clave} nombre={c.nombre || nombre} icono={icono} color={color} valor={valorCampo(clave, c)} unidad={valorCampo(clave, c) === "—" ? "" : unidad} />;
+            return <Tarjeta key={clave} nombre={c.nombre || nombre} icono={icono} color={color} valor={valor} unidad={valor === "—" ? "" : unidad} />;
           })}
         </div>
       )}
@@ -130,7 +130,7 @@ export default function Live({ panel, admin, onAviso, onHistorico }) {
       <p className="leyenda">Objetivos — {textoObj}. {p.objetivos_origen === "equipo" ? "Consigna del equipo." : p.objetivos_origen === "panel" ? "Guardados en el panel." : "Valores de fábrica hasta que se guarden."}</p>
       <div className="zonas">
         {(p.por_zona || []).map(z => (
-          <article className="zona" key={z.zona}>
+          <article className={"zona" + (z.control?.activo ? " activa" : "")} key={z.zona}>
             <h3>Zona {z.zona}{z.control?.etiqueta ? " · " + z.control.etiqueta : ""}</h3>
             <div className="par-gas">
               <Gas nombre="CO₂" gas={z.co2} />
@@ -208,6 +208,37 @@ function Gas({ nombre, gas }) {
   );
 }
 
+function Valvulas({ inyector }) {
+  const lista = (inyector && inyector.valvulas) || [];
+  const grupos = [
+    ["CO₂", "Válvulas de CO₂"],
+    ["Nitrógeno", "Válvulas de N₂"],
+    ["Bypass", "Bypass"],
+  ];
+  if (!lista.length) return <p className="leyenda">Sin bitmap del inyector.</p>;
+  return (
+    <>
+      {grupos.map(([grupo, titulo]) => {
+        const items = lista.filter(v => v.grupo === grupo);
+        if (!items.length) return null;
+        return (
+          <div key={grupo}>
+            <p className="leyenda" style={{ marginTop: 12, marginBottom: 0 }}>{titulo}</p>
+            <div className="fila-valvulas">
+              {items.map(v => (
+                <article key={v.indice} className={"valvula" + (v.encendido ? " on" : "")}>
+                  <div className="eti">{v.label}</div>
+                  <div className="valor">{v.encendido ? "Encendido" : "Apagado"}</div>
+                </article>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function Ciclo({ panel, onAviso }) {
   const p = panel || {};
   return (
@@ -222,14 +253,7 @@ function Ciclo({ panel, onAviso }) {
           <Tarjeta key={"k" + c.numero} nombre={"Compresor " + c.numero} icono="equipo" color="#b7791f" valor={c.etiqueta || "—"} clase={c.encendido ? "ok" : ""} />
         ))}
       </div>
-      <div className="lista" style={{ marginTop: 12 }}>
-        {((p.inyector && p.inyector.bits) || []).filter(b => b.label).map(b => (
-          <div className="fila" key={b.indice}>
-            <strong>{b.label}</strong>
-            <span>{b.encendido ? "Encendido" : "Apagado"}</span>
-          </div>
-        ))}
-      </div>
+      <Valvulas inyector={p.inyector} />
       <Salidas salidas={p.salidas} onAviso={onAviso} />
     </div>
   );
