@@ -65,7 +65,7 @@ export default function History({ hoy, admin, onAviso }) {
       <section className="bloque">
         <div className="tope">
           <div>
-            <h2>Histórico de gases y temperaturas</h2>
+            <h2>Monitoreo y análisis</h2>
             <p className="leyenda">La hora elegida entra completa. Misma consulta para la gráfica y la tabla. Lo más reciente queda arriba.</p>
           </div>
           <div className="rango">

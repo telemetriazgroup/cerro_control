@@ -1060,6 +1060,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             ".js": "text/javascript; charset=utf-8",
             ".css": "text/css; charset=utf-8",
             ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
             ".map": "application/json",
             ".woff2": "font/woff2",
         }.get(os.path.splitext(destino)[1], "application/octet-stream")
@@ -1132,6 +1136,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         resto_front = _resto_front(ruta)
+        if resto_front and resto_front.startswith("/marca/"):
+            self._estatico(resto_front)
+            return
         if ruta == "/login" or resto_front == "/login":
             if _puede_ver(self):
                 self._redirigir(PREFIJO_FRONT + "/")
