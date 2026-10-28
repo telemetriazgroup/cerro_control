@@ -618,6 +618,11 @@
   </div>
 </div>
 <script>
+const _fetchNativo = window.fetch.bind(window);
+window.fetch = (url, opts) => {
+  if (typeof url === "string" && url.startsWith("/") && !url.startsWith("/cerroprieto/")) url = "/cerroprieto" + url;
+  return _fetchNativo(url, opts);
+};
 const log = document.getElementById("log");
 const aviso = document.getElementById("aviso");
 const PASO_TEXTO = {

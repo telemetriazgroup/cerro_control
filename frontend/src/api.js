@@ -1,5 +1,11 @@
+export function ruta(url) {
+  const base = import.meta.env.BASE_URL || "/cerroprieto/";
+  if (typeof url !== "string" || !url.startsWith("/") || url.startsWith(base)) return url;
+  return base.replace(/\/$/, "") + url;
+}
+
 export async function jget(url) {
-  const respuesta = await fetch(url);
+  const respuesta = await fetch(ruta(url));
   if (respuesta.status === 401) {
     location.href = "/cerroprieto/login";
     throw new Error("hay que iniciar sesión");
@@ -10,7 +16,7 @@ export async function jget(url) {
 }
 
 export async function jpost(url, cuerpo) {
-  const respuesta = await fetch(url, {
+  const respuesta = await fetch(ruta(url), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cuerpo ?? {}),

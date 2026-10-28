@@ -141,7 +141,7 @@ Superadmin: además Serial, Comandos, Usuarios y Flujo de control, el análisis 
 
 ## API que usa el frontend
 
-Todas en el puerto 9986, en la raíz, con la cookie de sesión. El prefijo `/cerroprieto/` no las cubre.
+El navegador las pide bajo `/cerroprieto/` para que el proxy inverso las reenvíe. El puerto 9986 también las atiende en la raíz, para un script o un acceso directo. La cookie de sesión vale para todo el host. El detalle del proxy está en `caso_proxy.md`.
 
 | Método y ruta | Uso |
 |---|---|

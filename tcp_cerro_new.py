@@ -1082,6 +1082,28 @@ def _resto_front(ruta):
     return None
 
 
+# El proxy público solo reenvía /cerroprieto/. Estas rutas también se atienden ahí,
+# además de en la raíz del puerto 9986.
+_PREFIJOS_API = (
+    "/serial", "/lecturas", "/reporte", "/historial-comandos",
+    "/flujo", "/comando", "/comandos", "/config", "/cola",
+    "/usuarios", "/cuenta", "/archivos", "/salir", "/sesion",
+    "/dispositivos", "/cerro",
+)
+
+
+def _es_api(resto):
+    return any(resto == prefijo or resto.startswith(prefijo + "/") for prefijo in _PREFIJOS_API)
+
+
+def _normalizar(ruta):
+    """Si la API llega bajo /cerroprieto/, la trata igual que en la raíz del puerto."""
+    resto = _resto_front(ruta)
+    if resto and _es_api(resto):
+        return resto, None
+    return ruta, resto
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1182,11 +1204,10 @@ class ApiHandler(BaseHTTPRequestHandler):
         return urlparse(self.path).path.rstrip("/") or "/"
 
     def do_GET(self):
-        ruta = self._ruta()
+        ruta, resto_front = _normalizar(self._ruta())
         if ruta == "/salud":
             self._json(200, {"ok": True})
             return
-        resto_front = _resto_front(ruta)
         if resto_front and resto_front.startswith("/marca/"):
             self._estatico(resto_front)
             return
@@ -1394,7 +1415,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._json(200, panel.incorporar_archivo(destino, reemplazar=reemplazar))
 
     def do_POST(self):
-        ruta = self._ruta()
+        ruta, _resto = _normalizar(self._ruta())
         if ruta == "/login":
             self._json(404, {"ok": False, "detalle": "no está"})
             return

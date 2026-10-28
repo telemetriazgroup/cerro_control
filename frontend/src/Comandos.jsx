@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { jget, jpost } from "./api.js";
+import { jget, jpost, ruta } from "./api.js";
 
 const VACIO = { titulo: "", grupo: "General", trama: "", descripcion: "" };
 
@@ -59,7 +59,7 @@ export default function Comandos({ comandos, cola, hoy, onAviso }) {
 
   function bajar(formato) {
     const q = new URLSearchParams({ desde, hasta, formato });
-    window.location.href = "/historial-comandos?" + q.toString();
+    window.location.href = ruta("/historial-comandos?" + q.toString());
   }
 
   const activos = lista.filter(c => !c.archivado);

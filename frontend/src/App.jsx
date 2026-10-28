@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { esAdmin, jget, nombreRol } from "./api.js";
+import { esAdmin, jget, nombreRol, ruta } from "./api.js";
 import Live from "./Live.jsx";
 import History from "./History.jsx";
 import Serial from "./Serial.jsx";
@@ -118,7 +118,7 @@ export default function App() {
                     <small style={{ display: "block", color: "var(--suave)" }}>{usuario} · {rol ? nombreRol(rol) : ""}</small>
                   </div>
                   <button type="button" onClick={() => { setPerfil(true); setMenu(false); }}>Mi perfil</button>
-                  <button className="salir-rojo" type="button" onClick={async () => { await fetch("/salir", { method: "POST" }); location.href = "/cerroprieto/login"; }}>Cerrar sesión</button>
+                  <button className="salir-rojo" type="button" onClick={async () => { await fetch(ruta("/salir"), { method: "POST" }); location.href = "/cerroprieto/login"; }}>Cerrar sesión</button>
                 </div>
               )}
             </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "./Chart.jsx";
-import { flecha, jget, jpost, textoNum } from "./api.js";
+import { flecha, jget, jpost, ruta, textoNum } from "./api.js";
 
 const GASES = [
   ["co2", 0, "CO₂ zona 1", "#1b7f4a"],
@@ -123,7 +123,7 @@ export default function History({ hoy, admin, onAviso }) {
 
   function reporte(formato) {
     const q = new URLSearchParams({ desde, hasta, formato });
-    window.location.href = "/reporte?" + q.toString();
+    window.location.href = ruta("/reporte?" + q.toString());
   }
 
   return (
@@ -238,7 +238,7 @@ function Analisis({ data, onAviso }) {
     ev.preventDefault();
     if (!archivo) return;
     try {
-      const respuesta = await fetch("/archivos?nombre=" + encodeURIComponent(archivo.name), { method: "POST", body: archivo });
+      const respuesta = await fetch(ruta("/archivos?nombre=" + encodeURIComponent(archivo.name)), { method: "POST", body: archivo });
       const cuerpo = await respuesta.json();
       if (!respuesta.ok) throw new Error(cuerpo.detalle || "no se pudo subir");
       if (cuerpo.existe && !cuerpo.incorporado) {
