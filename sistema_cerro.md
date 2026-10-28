@@ -13,7 +13,7 @@ No hay carpeta `backend/`. El backend son estos dos archivos en la raíz del rep
 | `tcp_cerro_new.py` | Escucha el TCP, distingue atmósfera controlada de JSON, reenvía el JSON a los enlaces, sirve el HTTP y la sesión. |
 | `panel_cerro.py` | Interpreta el serial, guarda lecturas, cola, histórico, reportes y el flujo de control. |
 
-El frontend está en `frontend/`. El código fuente es React. `npm run build` deja el sitio en `frontend/dist`, y el proceso Python lo entrega bajo `http://<host>:9986/cerroprieto/`. La raíz del proyecto es `http://<host>:9986/cerroprieto/login`. Después de entrar, el navegador queda en `/cerroprieto/`. `/` y `/login` redirigen a esa puerta.
+El frontend está en `frontend/`. El código fuente es React. `npm run build` deja el sitio en `frontend/dist`, y el proceso Python lo entrega bajo `http://<host>:9986/cerroprieto/`. La raíz del proyecto es `http://<host>:9986/cerroprieto/login`. Después de entrar, el navegador queda en `/cerroprieto/`. `/` redirige a esa puerta. `/login` no existe.
 
 `interfaz.html` solo se usa si falta `frontend/dist/index.html`.
 

@@ -1191,8 +1191,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._estatico(resto_front)
             return
         if ruta == "/login":
-            consulta = urlparse(self.path).query
-            self._redirigir(RUTA_ACCESO + (("?" + consulta) if consulta else ""))
+            self._json(404, {"ok": False, "detalle": "no está"})
             return
         if resto_front == "/login":
             if _puede_ver(self):
@@ -1396,7 +1395,10 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         ruta = self._ruta()
-        if ruta == "/login" or _resto_front(ruta) == "/login":
+        if ruta == "/login":
+            self._json(404, {"ok": False, "detalle": "no está"})
+            return
+        if _resto_front(ruta) == "/login":
             self._entrar()
             return
         if ruta == "/salir":
