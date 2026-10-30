@@ -152,6 +152,7 @@ El navegador las pide bajo `/cerroprieto/` para que el proxy inverso las reenví
 | GET `/reporte?desde=&hasta=&formato=xlsx\|pdf` | Archivo del rango completo |
 | GET `/historial-comandos` | Solo superadmin |
 | GET y POST `/flujo`, `/flujo/par`, `/flujo/secuencia`, `/flujo/regla`, `/flujo/proceso` y sus acciones | Flujo de control. El proceso de corrección espera dos lecturas y después cada comando hasta que el anterior salió. |
+| POST `/intervencion` y `/intervencion/quitar` | Ajuste que solo ve el monitor, en una hora, una zona y un gas. El administrador sigue viendo el dato principal y la diferencia. |
 | POST `/comando`, POST `/cola/cancelar`, POST `/comandos`, POST `/config` | Cola, catálogo y objetivos |
 | GET y POST `/usuarios`, POST `/usuarios/quitar` | Cuentas |
 | POST `/archivos`, POST `/archivos/incorporar` | Subir un txt e incorporarlo. Tope 20 MB. Si ese día ya tiene lecturas, hace falta `reemplazar: true` |

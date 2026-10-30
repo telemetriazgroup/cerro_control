@@ -44,6 +44,32 @@ const REEFER = [
   ["sp_co2", "SP CO₂"],
 ];
 
+function hayAjuste(puntos, clave, i) {
+  return (puntos || []).some(p => {
+    const principal = (p[clave] || [])[i];
+    const monitor = (p[clave + "_monitor"] || [])[i];
+    return monitor != null && monitor !== principal;
+  });
+}
+function serieMonitor(clave, i, label, color) {
+  return {
+    id: "mon" + clave + i,
+    label: label + " · monitor",
+    color,
+    on: true,
+    pick: p => {
+      const principal = (p[clave] || [])[i];
+      const monitor = (p[clave + "_monitor"] || [])[i];
+      return monitor != null && monitor !== principal ? monitor : null;
+    },
+  };
+}
+function textoGas(gas, admin) {
+  const g = gas || {};
+  const base = (textoNum(g.valor) + " " + flecha(g.tendencia)).trim();
+  if (!admin || !g.delta) return base;
+  return base + " · monitor " + textoNum(g.valor_monitor) + " (" + (g.delta > 0 ? "+" : "") + g.delta + ")";
+}
 function serieGas(clave, i, label, color, on) {
   return { id: clave + i, label, color, on, pick: p => (p[clave] || [])[i] };
 }
@@ -115,9 +141,10 @@ export default function History({ hoy, admin, onAviso }) {
   const gases = useMemo(() => {
     const deZona = (i) => !zona || i === zona - 1;
     const medidas = GASES.filter(g => deZona(g[1])).map(g => serieGas(g[0], g[1], g[2], g[3], gasesOn[g[0] + g[1]] !== false));
+    const monitores = admin ? GASES.filter(g => deZona(g[1]) && hayAjuste(data?.puntos, g[0], g[1])).map(g => serieMonitor(g[0], g[1], g[2], g[3])) : [];
     const sets = SETS.filter(g => deZona(g[1])).map(g => serieSet(g[0], g[1], g[2], g[3], setsOn["set" + g[0] + g[1]] !== false, objetivos));
-    return medidas.concat(sets);
-  }, [gasesOn, setsOn, objetivos, zona]);
+    return medidas.concat(monitores, sets);
+  }, [gasesOn, setsOn, objetivos, zona, admin, data]);
   const temps = useMemo(() => TEMPS.map(t => serieTemp(t[0], t[1], t[2], !!tempsOn[t[0]])), [tempsOn]);
   const puntos = data?.puntos || [];
 
@@ -199,8 +226,8 @@ export default function History({ hoy, admin, onAviso }) {
                 return (
                   <tr key={fila.t}>
                     <td>{fila.fecha}</td>
-                    {(fila.zonas || []).map(z => <td key={"c" + z.zona}>{textoNum(z.co2?.valor)} {flecha(z.co2?.tendencia)}</td>)}
-                    {(fila.zonas || []).map(z => <td key={"o" + z.zona}>{textoNum(z.o2?.valor)} {flecha(z.o2?.tendencia)}</td>)}
+                    {(fila.zonas || []).map(z => <td key={"c" + z.zona}>{textoGas(z.co2, admin)}</td>)}
+                    {(fila.zonas || []).map(z => <td key={"o" + z.zona}>{textoGas(z.o2, admin)}</td>)}
                     {REEFER.map(([k]) => <td key={k}>{r[k]?.texto || "—"}</td>)}
                   </tr>
                 );

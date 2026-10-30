@@ -133,8 +133,8 @@ export default function Live({ panel, admin, onAviso, onHistorico }) {
           <article className={"zona" + (z.control?.activo ? " activa" : "")} key={z.zona}>
             <h3>Zona {z.zona}{z.control?.etiqueta ? " · " + z.control.etiqueta : ""}</h3>
             <div className="par-gas">
-              <Gas nombre="CO₂" gas={z.co2} />
-              <Gas nombre="O₂" gas={z.o2} />
+              <Gas nombre="CO₂" gas={z.co2} admin={admin} />
+              <Gas nombre="O₂" gas={z.o2} admin={admin} />
             </div>
           </article>
         ))}
@@ -160,6 +160,7 @@ export default function Live({ panel, admin, onAviso, onHistorico }) {
         </form>
       )}
 
+      {admin && <Intervencion lista={p.intervenciones || []} onAviso={onAviso} />}
       {admin && <Ciclo panel={p} onAviso={onAviso} />}
 
       <div className="pie-analisis">
@@ -197,14 +198,79 @@ function IconoMini({ nombre, color }) {
   return <svg {...comun}><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" /></svg>;
 }
 
-function Gas({ nombre, gas }) {
+function Gas({ nombre, gas, admin }) {
   const g = gas || {};
+  const signo = g.delta > 0 ? "+" : "";
   return (
     <div className={"gas tarjeta " + (g.estado || "")}>
       <div className="eti">{nombre} {flecha(g.tendencia)} {g.reinicio ? "· reinicio" : ""}</div>
       <div className="valor">{textoNum(g.valor)}<span className="unidad"> %</span></div>
       <div className="meta">objetivo {textoNum(g.objetivo, 0)}</div>
+      {admin && g.delta ? <div className="meta">Monitor {textoNum(g.valor_monitor)} · diferencia {signo}{g.delta}</div> : null}
     </div>
+  );
+}
+
+function horaCorta(salto) {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  d.setHours(d.getHours() + salto);
+  const n = v => String(v).padStart(2, "0");
+  return d.getFullYear() + "-" + n(d.getMonth() + 1) + "-" + n(d.getDate()) + "T" + n(d.getHours()) + ":00";
+}
+
+function Intervencion({ lista, onAviso }) {
+  const [form, setForm] = useState({ desde: horaCorta(0), hasta: horaCorta(1), zona: 2, gas: "co2", delta: 0.1 });
+  async function guardar(ev) {
+    ev.preventDefault();
+    try {
+      await jpost("/intervencion", {
+        desde: form.desde,
+        hasta: form.hasta,
+        zona: Number(form.zona),
+        gas: form.gas,
+        delta: Number(form.delta),
+      });
+      onAviso("Intervención guardada. El dato principal sigue igual y el monitor ve el ajuste.");
+    } catch (e) { onAviso(e.message, true); }
+  }
+  return (
+    <section className="bloque" style={{ marginTop: 18 }}>
+      <h3 className="kicker">Intervención para el monitor</h3>
+      <p className="leyenda">Elige la hora, la zona y el gas. Un número positivo sube lo que ve el monitor y uno negativo lo baja. El dato principal queda guardado. Aquí se ven las dos cifras y la diferencia.</p>
+      <form className="rango" onSubmit={guardar}>
+        <label>Desde<input type="datetime-local" step="3600" value={form.desde} onChange={e => setForm({ ...form, desde: e.target.value })} required /></label>
+        <label>Hasta<input type="datetime-local" step="3600" value={form.hasta} onChange={e => setForm({ ...form, hasta: e.target.value })} required /></label>
+        <label>Zona
+          <select value={form.zona} onChange={e => setForm({ ...form, zona: e.target.value })}>
+            <option value={1}>Zona 1</option>
+            <option value={2}>Zona 2</option>
+            <option value={3}>Zona 3</option>
+          </select>
+        </label>
+        <label>Gas
+          <select value={form.gas} onChange={e => setForm({ ...form, gas: e.target.value })}>
+            <option value="co2">CO₂</option>
+            <option value="o2">O₂</option>
+          </select>
+        </label>
+        <label>Ajuste<input type="number" step="0.1" min="-20" max="20" value={form.delta} onChange={e => setForm({ ...form, delta: e.target.value })} required /></label>
+        <button className="primario" type="submit">Guardar intervención</button>
+      </form>
+      <div className="lista" style={{ marginTop: 12 }}>
+        {lista.length ? lista.map(item => (
+          <div className="fila" key={item.id}>
+            <strong>Zona {item.zona} · {item.gas_nombre} · {item.delta > 0 ? "+" : ""}{item.delta}</strong>
+            <span>{item.desde_display} → {item.hasta_display} · {item.usuario} · {item.creado_display}</span>
+            <button className="secundario" type="button" onClick={async () => {
+              if (!window.confirm("¿Quitar esta intervención?")) return;
+              try { await jpost("/intervencion/quitar", { id: item.id }); onAviso("Intervención quitada."); }
+              catch (e) { onAviso(e.message, true); }
+            }}>Quitar</button>
+          </div>
+        )) : <p className="leyenda">No hay intervenciones. El monitor ve el mismo dato principal.</p>}
+      </div>
+    </section>
   );
 }
 

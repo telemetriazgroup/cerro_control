@@ -606,6 +606,7 @@ class Panel:
         self.ruta_cola = os.path.join(base_dir, "cola_comandos.json")
         self.ruta_vivo = os.path.join(base_dir, "estado_vivo.json")
         self.ruta_flujo = os.path.join(base_dir, "flujos.json")
+        self.ruta_interv = os.path.join(base_dir, "intervenciones.json")
         self.dir_cmd = os.path.join(base_dir, "historial_cmd")
         os.makedirs(self.dir_lecturas, exist_ok=True)
         os.makedirs(self.dir_cmd, exist_ok=True)
@@ -623,6 +624,7 @@ class Panel:
         self._cargar_cola()
         self._cargar_vivo()
         self.flujo = self._cargar_flujo()
+        self.interv = self._cargar_interv()
         self._restaurar_comandos()
 
     def linea(self, ip, texto, cuando=None):
@@ -1087,7 +1089,7 @@ class Panel:
             tipo = "application/pdf"
         return cuerpo, tipo, nombre
 
-    def lecturas(self, desde_s, hasta_s, ip=None, completo=False):
+    def lecturas(self, desde_s, hasta_s, ip=None, completo=False, rol="administrador"):
         inicio, fin, aviso = _rango_busqueda(desde_s, hasta_s)
         api_recs = []
         api_ok = False
@@ -1191,7 +1193,7 @@ class Panel:
                     if api_ok and (_parse_iso(rec.get("t")) or CORTE_LOCAL) < CORTE_LOCAL:
                         continue
                     tomar(rec)
-        return {
+        salida = {
             "desde": inicio.isoformat(timespec="minutes"),
             "hasta": (fin - datetime.timedelta(seconds=1)).isoformat(timespec="seconds"),
             "ip": ip,
@@ -1206,12 +1208,13 @@ class Panel:
             "analisis": _analisis_pub(stats),
             "por_hora": [_cerrar_hora(clave, horas_map[clave]) for clave in horas_orden],
         }
+        return self.presentar_lecturas(salida, rol)
 
-    def reporte(self, desde_s, hasta_s, ip, formato):
+    def reporte(self, desde_s, hasta_s, ip, formato, rol="administrador"):
         formato = (formato or "").lower()
         if formato not in ("xlsx", "pdf"):
             raise PanelError(400, "el formato es xlsx o pdf")
-        data = self.lecturas(desde_s, hasta_s, ip, completo=True)
+        data = self.lecturas(desde_s, hasta_s, ip, completo=True, rol=rol)
         filas = list(reversed(data["tabla"]))
         nombre = f"cerro_{data['desde'][:13].replace(':', '')}_{data['hasta'][:13].replace(':', '')}.{formato}"
         if formato == "xlsx":
@@ -1783,6 +1786,151 @@ class Panel:
             "etileno": json.loads(json.dumps(self.config["etileno"])),
             "comandos": json.loads(json.dumps(self.config["comandos"])),
         }
+
+    def guardar_intervencion(self, data, usuario):
+        if not isinstance(data, dict):
+            raise PanelError(400, "la intervención debe ser un objeto")
+        try:
+            zona = int(data.get("zona") or 0)
+        except (TypeError, ValueError):
+            zona = 0
+        gas = str(data.get("gas") or "").strip()
+        if zona not in (1, 2, 3) or gas not in ("co2", "o2"):
+            raise PanelError(400, "la intervención usa zona 1 a 3 y gas co2 u o2")
+        delta = _num(data.get("delta"))
+        if delta is None or delta == 0 or abs(delta) > 20:
+            raise PanelError(400, "el ajuste va de -20 a 20 y no puede ser cero")
+        inicio, fin, _aviso = _rango_busqueda(data.get("desde"), data.get("hasta"))
+        with self._lock:
+            self.interv["seq"] = int(self.interv.get("seq") or 0) + 1
+            item = {
+                "id": f"i{self.interv['seq']}",
+                "desde": inicio.isoformat(timespec="seconds"),
+                "hasta": fin.isoformat(timespec="seconds"),
+                "zona": zona,
+                "gas": gas,
+                "delta": round(delta, 2),
+                "usuario": str(usuario or "").strip()[:40] or "administrador",
+                "creado": ahora().isoformat(timespec="seconds"),
+            }
+            self.interv["items"].append(item)
+            self.interv["items"] = self.interv["items"][-200:]
+            self._guardar_interv()
+            return {"intervenciones": self._interv_pub_locked()}
+
+    def quitar_intervencion(self, ident):
+        with self._lock:
+            items = [x for x in self.interv["items"] if x.get("id") != ident]
+            if len(items) == len(self.interv["items"]):
+                raise PanelError(404, "no está esa intervención")
+            self.interv["items"] = items
+            self._guardar_interv()
+            return {"intervenciones": self._interv_pub_locked()}
+
+    def presentar_vista(self, vista, rol):
+        if not isinstance(vista, dict):
+            return vista
+        momento = _parse_iso((vista.get("datos_total") or {}).get("fecha"))
+        toco = False
+        for zona in vista.get("por_zona") or []:
+            for gas in ("co2", "o2"):
+                if self._marcar_gas(zona.get(gas), momento, zona.get("zona"), gas, rol):
+                    toco = True
+        if rol == "administrador":
+            vista["intervenciones"] = self.intervenciones_pub()
+        else:
+            vista.pop("intervenciones", None)
+            if toco:
+                vista["d02_raw"] = ""
+                vista["ultimo_texto"] = ""
+                total = vista.get("datos_total")
+                if isinstance(total, dict):
+                    total["d02"] = ""
+        return vista
+
+    def presentar_lecturas(self, data, rol):
+        for punto in data.get("puntos") or []:
+            momento = _parse_iso(punto.get("t"))
+            for gas in ("co2", "o2"):
+                vals = list(punto.get(gas) or [])
+                ajustados = []
+                for i, valor in enumerate(vals):
+                    delta = self._delta_de(momento, i + 1, gas) if valor is not None else 0
+                    ajustados.append(None if valor is None else round(valor + delta, 2))
+                if rol == "monitoreo":
+                    punto[gas] = ajustados
+                else:
+                    punto[gas + "_monitor"] = ajustados
+        for fila in data.get("tabla") or []:
+            momento = _parse_iso(fila.get("t"))
+            for zona in fila.get("zonas") or []:
+                for gas in ("co2", "o2"):
+                    self._marcar_gas(zona.get(gas), momento, zona.get("zona"), gas, rol)
+        return data
+
+    def intervenciones_pub(self):
+        with self._lock:
+            return self._interv_pub_locked()
+
+    def _cargar_interv(self):
+        data = _leer_json(self.ruta_interv) or {}
+        data.setdefault("seq", 0)
+        data.setdefault("items", [])
+        return data
+
+    def _guardar_interv(self):
+        _atomic_json(self.ruta_interv, self.interv)
+
+    def _interv_pub_locked(self):
+        salida = []
+        for item in reversed(self.interv.get("items") or []):
+            pub = dict(item)
+            pub["desde_display"] = fmt_fecha(_parse_iso(item.get("desde")))
+            pub["hasta_display"] = fmt_fecha(_parse_iso(item.get("hasta")))
+            pub["creado_display"] = fmt_fecha(_parse_iso(item.get("creado")))
+            pub["gas_nombre"] = "CO₂" if item.get("gas") == "co2" else "O₂"
+            salida.append(pub)
+        return salida
+
+    def _delta_de(self, momento, zona, gas):
+        if isinstance(momento, str):
+            momento = _parse_iso(momento)
+        if momento is None:
+            return 0
+        total = 0
+        for item in self.interv.get("items") or []:
+            if item.get("zona") != zona or item.get("gas") != gas:
+                continue
+            inicio = _parse_iso(item.get("desde"))
+            fin = _parse_iso(item.get("hasta"))
+            if inicio is None or fin is None or not (inicio <= momento < fin):
+                continue
+            total += float(item.get("delta") or 0)
+        return round(total, 2)
+
+    def _marcar_gas(self, gas, momento, zona, nombre, rol):
+        if not isinstance(gas, dict):
+            return
+        valor = gas.get("valor")
+        delta = 0 if valor is None or gas.get("reinicio") else self._delta_de(momento, zona, nombre)
+        if not delta:
+            if rol == "administrador":
+                gas["valor_monitor"] = valor
+                gas["delta"] = 0
+            return False
+        ajustado = round(valor + delta, 2)
+        if rol == "monitoreo":
+            gas["valor"] = ajustado
+            if not gas.get("reinicio"):
+                gas["crudo"] = ajustado
+            obj = gas.get("objetivo")
+            desv = None if obj is None else abs(ajustado - obj)
+            gas["desviacion"] = None if desv is None else round(desv, 2)
+            gas["estado"] = estado_color(desv)
+        else:
+            gas["valor_monitor"] = ajustado
+            gas["delta"] = delta
+        return True
 
     def _cargar_flujo(self):
         data = _leer_json(self.ruta_flujo) or {}
@@ -3927,6 +4075,54 @@ def _test_corrida_proceso(tmp):
     assert p.tomar_ventana(ip) is None
 
 
+def _test_intervencion(tmp):
+    p = Panel(tmp)
+    ip = "10.3.3.3"
+    cuando = ahora().replace(minute=10, second=0, microsecond=0)
+    hora = cuando.strftime("%Y-%m-%dT%H:00")
+    p.linea(ip, "STARCOOL_CONSULTA:8,4.7,8,4,10.6,8,80,80,80,1,0,1,0,0,0", cuando)
+    pub = p.guardar_intervencion({
+        "desde": hora,
+        "hasta": hora,
+        "zona": 2,
+        "gas": "co2",
+        "delta": 0.4,
+    }, "zgroup")
+    assert pub["intervenciones"][0]["usuario"] == "zgroup"
+    admin = p.lecturas(cuando.date().isoformat(), cuando.date().isoformat())
+    gas = admin["tabla"][0]["zonas"][1]["co2"]
+    assert gas["valor"] == 4.7
+    assert gas["valor_monitor"] == 5.1
+    assert gas["delta"] == 0.4
+    assert admin["tabla"][0]["zonas"][1]["o2"]["delta"] == 0
+    assert admin["puntos"][0]["co2"][1] == 4.7
+    assert admin["puntos"][0]["co2_monitor"][1] == 5.1
+    mon = p.lecturas(cuando.date().isoformat(), cuando.date().isoformat(), rol="monitoreo")
+    visto = mon["tabla"][0]["zonas"][1]["co2"]
+    assert visto["valor"] == 5.1
+    assert visto["crudo"] == 5.1
+    assert "delta" not in visto
+    assert mon["puntos"][0]["co2"][1] == 5.1
+    assert "co2_monitor" not in mon["puntos"][0]
+    vista = p.presentar_vista(p.vista(ip), "administrador")
+    assert vista["por_zona"][1]["co2"]["valor"] == 4.7
+    assert vista["por_zona"][1]["co2"]["valor_monitor"] == 5.1
+    monitor = p.presentar_vista(p.vista(ip), "monitoreo")
+    assert monitor["por_zona"][1]["co2"]["valor"] == 5.1
+    assert monitor["por_zona"][1]["co2"]["crudo"] == 5.1
+    assert monitor["d02_raw"] == ""
+    assert monitor["datos_total"]["d02"] == ""
+    assert "intervenciones" not in monitor
+    try:
+        p.guardar_intervencion({"desde": hora, "hasta": hora, "zona": 2, "gas": "co2", "delta": 0}, "zgroup")
+        raise AssertionError("el cero debio rechazarse")
+    except PanelError as e:
+        assert e.status == 400
+    p.quitar_intervencion(pub["intervenciones"][0]["id"])
+    limpio = p.lecturas(cuando.date().isoformat(), cuando.date().isoformat())
+    assert limpio["tabla"][0]["zonas"][1]["co2"]["delta"] == 0
+
+
 def _test_union_api(tmp):
     p = Panel(tmp)
     os.makedirs(p.dir_lecturas, exist_ok=True)
@@ -3966,7 +4162,7 @@ def _test_union_api(tmp):
 def _probar():
     import shutil
     import tempfile
-    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo, _test_corrida_proceso, _test_union_api):
+    for fn in (_test_reconstruccion, _test_flecha, _test_cola, _test_historico, _test_comandos, _test_importar, _test_flujo, _test_corrida_proceso, _test_intervencion, _test_union_api):
         tmp = tempfile.mkdtemp()
         try:
             fn(tmp)

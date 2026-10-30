@@ -9,12 +9,12 @@ export default defineConfig({
     proxy: Object.fromEntries([
       "/serial", "/lecturas", "/reporte", "/flujo", "/comando", "/comandos",
       "/config", "/cola", "/usuarios", "/cuenta", "/sesion", "/salir",
-      "/archivos", "/historial-comandos", "/salud",
+      "/archivos", "/historial-comandos", "/intervencion", "/salud",
       "/cerroprieto/login", "/cerroprieto/serial", "/cerroprieto/lecturas",
       "/cerroprieto/reporte", "/cerroprieto/flujo", "/cerroprieto/comando",
       "/cerroprieto/comandos", "/cerroprieto/config", "/cerroprieto/cola",
       "/cerroprieto/usuarios", "/cerroprieto/cuenta", "/cerroprieto/sesion",
-      "/cerroprieto/salir", "/cerroprieto/archivos", "/cerroprieto/historial-comandos",
+      "/cerroprieto/salir", "/cerroprieto/archivos", "/cerroprieto/historial-comandos", "/cerroprieto/intervencion",
     ].map(ruta => [ruta, "http://127.0.0.1:9986"])),
   },
 });

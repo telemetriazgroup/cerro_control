@@ -1087,7 +1087,7 @@ def _resto_front(ruta):
 _PREFIJOS_API = (
     "/serial", "/lecturas", "/reporte", "/historial-comandos",
     "/flujo", "/comando", "/comandos", "/config", "/cola",
-    "/usuarios", "/cuenta", "/archivos", "/salir", "/sesion",
+    "/usuarios", "/cuenta", "/archivos", "/salir", "/sesion", "/intervencion",
     "/dispositivos", "/cerro",
 )
 
@@ -1264,7 +1264,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 ip = ip.strip() or None
             completo = (consulta.get("completo") or ["0"])[0] in ("1", "true", "si")
             try:
-                self._json(200, panel.lecturas(desde, hasta, ip, completo))
+                self._json(200, panel.lecturas(desde, hasta, ip, completo, _rol_de(self)))
             except PanelError as e:
                 self._json(e.status, {"ok": False, "detalle": e.detalle})
         elif ruta == "/serial":
@@ -1281,6 +1281,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 equipo = equipo.strip() or None
             data = snapshot_serial(desde, ip, equipo)
             rol = _rol_de(self)
+            panel.presentar_vista(data.get("panel") or {}, rol)
             datos = _sesion(self) or {}
             data["rol"] = rol
             data["usuario"] = datos.get("usuario") or ""
@@ -1331,7 +1332,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             if ip:
                 ip = ip.strip() or None
             try:
-                cuerpo, tipo, nombre = panel.reporte(desde, hasta, ip, formato)
+                cuerpo, tipo, nombre = panel.reporte(desde, hasta, ip, formato, _rol_de(self))
             except PanelError as e:
                 self._json(e.status, {"ok": False, "detalle": e.detalle})
                 return
@@ -1504,6 +1505,12 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif ruta == "/flujo/proceso/quitar":
                 data = self._cuerpo_json()
                 self._json(200, {"ok": True, **panel.quitar_proceso(data.get("id"))})
+            elif ruta == "/intervencion":
+                datos = _sesion(self) or {}
+                self._json(200, {"ok": True, **panel.guardar_intervencion(self._cuerpo_json(), datos.get("usuario"))})
+            elif ruta == "/intervencion/quitar":
+                data = self._cuerpo_json()
+                self._json(200, {"ok": True, **panel.quitar_intervencion(data.get("id"))})
             else:
                 self._json(404, {"ok": False, "detalle": "ruta no encontrada"})
         except ErrorComando as e:
